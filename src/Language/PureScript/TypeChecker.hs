@@ -376,28 +376,31 @@ typeCheckAll moduleName _ = traverse go
       (args', implies', tys', kind) <- kindOfClass moduleName (sa, pn, args, implies, tys)
       addTypeClass moduleName qualifiedClassName (fmap Just <$> args') implies' deps tys' kind
       return d
-  go (d@(TypeInstanceDeclaration sa@(ss, _) ch idx dictName deps className tys body)) =
-    rethrow (addHint (ErrorInInstance className tys) . addHint (positionedError ss)) $ do
+  go (d@(TypeInstanceDeclaration sa@(ss, _) ch idx dictName deps className tys body))
+    | Just dictName' <- getTypeInstanceName dictName
+    , Just ch' <- traverse getTypeInstanceName ch
+    = rethrow (addHint (ErrorInInstance className tys) . addHint (positionedError ss)) $ do
       env <- getEnv
-      let qualifiedDictName = Qualified (Just moduleName) dictName
+      let qualifiedDictName = Qualified (Just moduleName) dictName'
       flip (traverse_ . traverse_) (typeClassDictionaries env) $ \dictionaries ->
-        guardWith (errorMessage (DuplicateInstance dictName ss)) $
+        guardWith (errorMessage (DuplicateInstance dictName' ss)) $
           not (M.member qualifiedDictName dictionaries)
       case M.lookup className (typeClasses env) of
         Nothing -> internalError "typeCheckAll: Encountered unknown type class in instance declaration"
         Just typeClass -> do
-          checkInstanceArity dictName className typeClass tys
+          checkInstanceArity dictName' className typeClass tys
           (deps', kinds', tys', vars) <- withFreshSubstitution $ checkInstanceDeclaration moduleName (sa, deps, className, tys)
           sequence_ (zipWith (checkTypeClassInstance typeClass) [0..] tys')
           let nonOrphanModules = findNonOrphanModules className typeClass tys'
-          checkOrphanInstance dictName className tys' nonOrphanModules
-          let qualifiedChain = Qualified (Just moduleName) <$> ch
-          checkOverlappingInstance qualifiedChain dictName className typeClass tys' nonOrphanModules
+          checkOrphanInstance dictName' className tys' nonOrphanModules
+          let qualifiedChain = Qualified (Just moduleName) <$> ch'
+          checkOverlappingInstance qualifiedChain dictName' className typeClass tys' nonOrphanModules
           _ <- traverseTypeInstanceBody checkInstanceMembers body
           deps'' <- (traverse . overConstraintArgs . traverse) replaceAllTypeSynonyms deps'
           let dict = TypeClassDictionaryInScope qualifiedChain idx qualifiedDictName [] className vars kinds' tys' (Just deps'')
           addTypeClassDictionaries (Just moduleName) . M.singleton className $ M.singleton (tcdValue dict) (pure dict)
           return d
+    | otherwise = internalError "typeCheckAll: Encountered anonymous type instance"
 
   checkInstanceArity :: Ident -> Qualified (ProperName 'ClassName) -> TypeClassData -> [SourceType] -> m ()
   checkInstanceArity dictName className typeClass tys = do

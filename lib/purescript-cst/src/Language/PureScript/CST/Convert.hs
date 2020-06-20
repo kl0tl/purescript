@@ -468,20 +468,21 @@ convertDeclaration fileName decl = case decl of
       (goSig <$> maybe [] (NE.toList . snd) bd)
   DeclInstanceChain _ insts -> do
     let
-      instName (Instance (InstanceHead _ a _ _ _ _) _) = ident $ nameValue a
+      instName (Instance (InstanceHead _ a _ _ _) _) =
+        maybe AST.AnonymousTypeInstance (AST.ExplicitTypeInstanceName . ident . nameValue . fst) a
       chainId = instName <$> toList insts
-      goInst ix inst@(Instance (InstanceHead _ name _ ctrs cls args) bd) = do
+      goInst ix inst@(Instance (InstanceHead _ name ctrs cls args) bd) = do
         let ann' = uncurry (sourceAnnCommented fileName) $ instanceRange inst
         AST.TypeInstanceDeclaration ann' chainId ix
-          (ident $ nameValue name)
+          (maybe AST.AnonymousTypeInstance (AST.ExplicitTypeInstanceName . ident . nameValue . fst) name)
           (convertConstraint fileName <$> maybe [] (toList . fst) ctrs)
           (qualified cls)
           (convertType fileName <$> args)
           (AST.ExplicitInstance $ goInstanceBinding <$> maybe [] (NE.toList . snd) bd)
     uncurry goInst <$> zip [0..] (toList insts)
-  DeclDerive _ _ new (InstanceHead _ name _ ctrs cls args) -> do
+  DeclDerive _ _ new (InstanceHead _ name ctrs cls args) -> do
     let
-      name' = ident $ nameValue name
+      name' = maybe AST.AnonymousTypeInstance (AST.ExplicitTypeInstanceName . ident . nameValue . fst) name
       instTy
         | isJust new = AST.NewtypeInstance
         | otherwise = AST.DerivedInstance

@@ -2,6 +2,7 @@ module Language.PureScript.CST.Flatten where
 
 import Prelude
 
+import Data.Bifoldable (bifoldMap)
 import Data.DList (DList)
 import Language.PureScript.CST.Types
 import Language.PureScript.CST.Positions
@@ -46,13 +47,12 @@ flattenInstance (Instance a b) =
   flattenInstanceHead a <> foldMap (\(c, d) -> pure c <> foldMap flattenInstanceBinding d) b
 
 flattenInstanceHead :: InstanceHead a -> DList SourceToken
-flattenInstanceHead (InstanceHead a b c d e f) =
+flattenInstanceHead (InstanceHead a b c d e) =
   pure a <>
-  flattenName b <>
-  pure c <>
-  foldMap (\(g, h) -> flattenOneOrDelimited flattenConstraint g <> pure h) d <>
-  flattenQualifiedName e <>
-  foldMap flattenType f
+  foldMap (bifoldMap flattenName pure) b <>
+  foldMap (bifoldMap (flattenOneOrDelimited flattenConstraint) pure) c <>
+  flattenQualifiedName d <>
+  foldMap flattenType e
 
 flattenInstanceBinding :: InstanceBinding a -> DList SourceToken
 flattenInstanceBinding = \case

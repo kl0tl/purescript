@@ -15,6 +15,7 @@ import Data.Traversable (traverse)
 import Language.PureScript.AST
 import Language.PureScript.Errors
 import Language.PureScript.Externs
+import Language.PureScript.Sugar.AnonymousTypeInstances as S
 import Language.PureScript.Sugar.BindingGroups as S
 import Language.PureScript.Sugar.CaseDeclarations as S
 import Language.PureScript.Sugar.DoNotation as S
@@ -66,6 +67,7 @@ desugar env externs =
     >=> map desugarLetPatternModule
     >>> traverse desugarCasesModule
     >=> traverse desugarTypeDeclarationsModule
+    >>> fmap (map desugarAnonymousTypeInstancesModule)
     >=> desugarImports env
     >=> rebracket externs
     >=> traverse checkFixityExports

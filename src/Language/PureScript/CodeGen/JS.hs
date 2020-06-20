@@ -195,6 +195,7 @@ moduleToJs (Module _ coms mn _ imps exps reExps foreigns decls) foreign_ =
   -- indexer is returned.
   accessor :: Ident -> AST -> AST
   accessor (Ident prop) = accessorString $ mkString prop
+  accessor (Escaped prop) = accessorString $ mkString prop
   accessor (GenIdent _ _) = internalError "GenIdent in accessor"
   accessor UnusedIdent = internalError "UnusedIdent in accessor"
 

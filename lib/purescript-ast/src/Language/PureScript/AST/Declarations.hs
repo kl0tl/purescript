@@ -425,7 +425,7 @@ data Declaration
   -- A type instance declaration (instance chain, chain index, name,
   -- dependencies, class name, instance types, member declarations)
   --
-  | TypeInstanceDeclaration SourceAnn [Ident] Integer Ident [SourceConstraint] (Qualified (ProperName 'ClassName)) [SourceType] TypeInstanceBody
+  | TypeInstanceDeclaration SourceAnn [TypeInstanceName] Integer TypeInstanceName [SourceConstraint] (Qualified (ProperName 'ClassName)) [SourceType] TypeInstanceBody
   deriving (Show)
 
 data ValueFixity = ValueFixity Fixity (Qualified (Either Ident (ProperName 'ConstructorName))) (OpName 'ValueOpName)
@@ -439,6 +439,22 @@ pattern ValueFixityDeclaration sa fixity name op = FixityDeclaration sa (Left (V
 
 pattern TypeFixityDeclaration :: SourceAnn -> Fixity -> Qualified (ProperName 'TypeName) -> OpName 'TypeOpName -> Declaration
 pattern TypeFixityDeclaration sa fixity name op = FixityDeclaration sa (Right (TypeFixity fixity name op))
+
+-- | The name of a type class instance declaration
+data TypeInstanceName
+  = AnonymousTypeInstance
+  -- ^ An omitted type instance name, which will be desugared to an
+  -- @ImplicitTypeInstanceName name@ for some generated @name@
+  | ImplicitTypeInstanceName Ident
+  -- ^ A generated type instance name
+  | ExplicitTypeInstanceName Ident
+  -- ^ An explicitely written type instance name
+  deriving (Eq, Show)
+
+getTypeInstanceName :: TypeInstanceName -> Maybe Ident
+getTypeInstanceName AnonymousTypeInstance = Nothing
+getTypeInstanceName (ImplicitTypeInstanceName name) = Just name
+getTypeInstanceName (ExplicitTypeInstanceName name) = Just name
 
 -- | The members of a type class instance declaration
 data TypeInstanceBody
@@ -498,7 +514,7 @@ declName (ExternDataDeclaration _ n _) = Just (TyName n)
 declName (FixityDeclaration _ (Left (ValueFixity _ _ n))) = Just (ValOpName n)
 declName (FixityDeclaration _ (Right (TypeFixity _ _ n))) = Just (TyOpName n)
 declName (TypeClassDeclaration _ n _ _ _ _) = Just (TyClassName n)
-declName (TypeInstanceDeclaration _ _ _ n _ _ _ _) = Just (IdentName n)
+declName (TypeInstanceDeclaration _ _ _ n _ _ _ _) = IdentName <$> getTypeInstanceName n
 declName ImportDeclaration{} = Nothing
 declName BindingGroupDeclaration{} = Nothing
 declName DataBindingGroupDeclaration{} = Nothing

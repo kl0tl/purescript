@@ -736,10 +736,14 @@ classMember :: { Labeled (Name Ident) (Type ()) }
   : ident '::' type {% checkNoWildcards $3 *> pure (Labeled $1 $2 $3) }
 
 instHead :: { InstanceHead () }
-  : 'instance' ident '::' constraints '=>' qualProperName manyOrEmpty(typeAtom)
-      { InstanceHead $1 $2 $3 (Just ($4, $5)) (getQualifiedProperName $6) $7 }
-  | 'instance' ident '::' qualProperName manyOrEmpty(typeAtom)
-      { InstanceHead $1 $2 $3 Nothing (getQualifiedProperName $4) $5 }
+  : 'instance' instName constraints '=>' qualProperName manyOrEmpty(typeAtom)
+      { InstanceHead $1 $2 (Just ($3, $4)) (getQualifiedProperName $5) $6 }
+  | 'instance' instName qualProperName manyOrEmpty(typeAtom)
+      { InstanceHead $1 $2 Nothing (getQualifiedProperName $3) $4 }
+
+instName :: { Maybe (Name Ident, SourceToken) }
+  : {- empty -} { Nothing }
+  | ident '::' { Just ($1, $2) }
 
 constraints :: { OneOrDelimited (Constraint ()) }
   : constraint { One $1 }

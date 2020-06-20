@@ -70,6 +70,10 @@ data Ident
   --
   = Ident Text
   -- |
+  -- An escaped name
+  --
+  | Escaped Text
+  -- |
   -- A generated name for an identifier
   --
   | GenIdent (Maybe Text) Integer
@@ -84,6 +88,7 @@ instance Serialise Ident
 
 runIdent :: Ident -> Text
 runIdent (Ident i) = i
+runIdent (Escaped name) = name
 runIdent (GenIdent Nothing n) = "$" <> T.pack (show n)
 runIdent (GenIdent (Just name) n) = "$" <> name <> T.pack (show n)
 runIdent UnusedIdent = "$__unused"
