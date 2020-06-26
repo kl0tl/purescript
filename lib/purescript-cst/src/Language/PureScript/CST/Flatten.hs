@@ -27,6 +27,10 @@ flattenDataHead (DataHead a b c) = pure a <> flattenName b <> foldMap flattenTyp
 flattenDataCtor :: DataCtor a -> DList SourceToken
 flattenDataCtor (DataCtor _ a b) = flattenName a <> foldMap flattenType b
 
+flattenDerivedInstances :: DerivedInstances a -> DList SourceToken
+flattenDerivedInstances (DerivedInstances _ a b c) =
+  pure a <> foldMap pure b <> flattenOneOrDelimited flattenConstraint c
+
 flattenClassHead :: ClassHead a -> DList SourceToken
 flattenClassHead (ClassHead a b c d e) =
   pure a <>
@@ -205,11 +209,17 @@ flattenRole = pure . roleTok
 
 flattenDeclaration :: Declaration a -> DList SourceToken
 flattenDeclaration = \case
-  DeclData _ a b ->
+  DeclData _ a b c ->
     flattenDataHead a <>
-    foldMap (\(t, cs) -> pure t <> flattenSeparated flattenDataCtor cs) b
-  DeclType _ a b c ->flattenDataHead a <> pure b <> flattenType c
-  DeclNewtype _ a b c d -> flattenDataHead a <> pure b <> flattenName c <> flattenType d
+    foldMap (\(t, cs) -> pure t <> flattenSeparated flattenDataCtor cs) b <>
+    foldMap flattenDerivedInstances c
+  DeclType _ a b c -> flattenDataHead a <> pure b <> flattenType c
+  DeclNewtype _ a b c d e ->
+    flattenDataHead a <>
+    pure b <>
+    flattenName c <>
+    flattenType d <>
+    foldMap flattenDerivedInstances e
   DeclClass _ a b ->
     flattenClassHead a <>
     foldMap (\(c, d) -> pure c <> foldMap (flattenLabeled flattenName flattenType) d) b

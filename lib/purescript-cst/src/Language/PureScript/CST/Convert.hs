@@ -427,6 +427,25 @@ convertBinder fileName = go
           binder' -> k binder'
       positioned ann $ loop go binder
 
+convertDerivedInstances :: String -> DerivedInstances a -> [AST.Declaration]
+convertDerivedInstances fileName (DerivedInstances _ _ new constraints) =
+  let
+    body
+      | isJust new = AST.NewtypeInstance
+      | otherwise = AST.DerivedInstance
+  in convertDerivedInstanceConstraint fileName body <$> constraints
+
+convertDerivedInstanceConstraint :: String -> TypeInstanceBody -> Constraint a -> AST.Declaration
+convertDerivedInstanceConstraint fileName body = \case
+  Constraint _ className args ->
+    AST.TypeInstanceDeclaration ann [AST.AnonymousTypeInstance] 0 AST.AnonymousTypeInstance
+      []
+      (qualified className)
+      convertType fileName <$> args
+      body
+  ConstraintParens _ (Wrapped _ constraint _) ->
+    convertDerivedInstanceConstraint constraint
+
 convertDeclaration :: String -> Declaration a -> [AST.Declaration]
 convertDeclaration fileName decl = case decl of
   DeclData _ (DataHead _ a vars) bd -> do

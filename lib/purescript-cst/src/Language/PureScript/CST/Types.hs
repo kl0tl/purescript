@@ -193,9 +193,9 @@ data DataMembers a
   deriving (Show, Eq, Ord, Functor, Foldable, Traversable, Generic)
 
 data Declaration a
-  = DeclData a (DataHead a) (Maybe (SourceToken, Separated (DataCtor a)))
+  = DeclData a (DataHead a) (Maybe (SourceToken, Separated (DataCtor a))) [DerivedInstances a]
   | DeclType a (DataHead a) SourceToken (Type a)
-  | DeclNewtype a (DataHead a) SourceToken (Name (N.ProperName 'N.ConstructorName)) (Type a)
+  | DeclNewtype a (DataHead a) SourceToken (Name (N.ProperName 'N.ConstructorName)) (Type a) [DerivedInstances a]
   | DeclClass a (ClassHead a) (Maybe (SourceToken, NonEmpty (Labeled (Name Ident) (Type a))))
   | DeclInstanceChain a (Separated (Instance a))
   | DeclDerive a SourceToken (Maybe SourceToken) (InstanceHead a)
@@ -244,6 +244,13 @@ data DataCtor a = DataCtor
   { dataCtorAnn :: a
   , dataCtorName :: Name (N.ProperName 'N.ConstructorName)
   , dataCtorFields :: [Type a]
+  } deriving (Show, Eq, Ord, Functor, Foldable, Traversable, Generic)
+
+data DerivedInstances a = DerivedInstances
+  { derivedInstancesAnn :: a
+  , derivedInstancesKeyword :: SourceToken
+  , derivedInstancesStrategy :: Maybe SourceToken
+  , derivedInstancesConstraints :: OneOrDelimited (Constraint a)
   } deriving (Show, Eq, Ord, Functor, Foldable, Traversable, Generic)
 
 data ClassHead a = ClassHead
