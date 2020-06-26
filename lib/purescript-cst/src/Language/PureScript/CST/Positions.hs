@@ -7,8 +7,10 @@ module Language.PureScript.CST.Positions where
 
 import Prelude
 
+import Control.Applicative ((<|>))
 import Data.Foldable (foldl')
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Void (Void)
 import qualified Data.Text as Text
@@ -163,12 +165,16 @@ dataMembersRange = \case
 
 declRange :: Declaration a -> TokenRange
 declRange = \case
-  DeclData _ hd ctors
-    | Just (_, cs) <- ctors -> (fst start, snd . dataCtorRange $ sepLast cs)
-    | otherwise -> start
+  DeclData _ hd ctors insts -> (fst start, snd end)
     where start = dataHeadRange hd
-  DeclType _ a _ b -> (fst $ dataHeadRange a,  snd $ typeRange b)
-  DeclNewtype _ a _ _ b -> (fst $ dataHeadRange a, snd $ typeRange b)
+          end = fromMaybe start $
+                  (derivedTypeInstancesRange . NE.last <$> NE.nonEmpty insts)
+              <|> (dataCtorRange . sepLast . snd <$> ctors)
+  DeclType _ a _ b -> (fst $ dataHeadRange a, snd $ typeRange b)
+  DeclNewtype _ hd _ _ ty insts -> (fst start, snd end)
+    where start = dataHeadRange hd
+          end = fromMaybe (typeRange ty) $
+                  derivedTypeInstancesRange . NE.last <$> NE.nonEmpty insts
   DeclClass _ hd body
     | Just (_, ts) <- body -> (fst start, snd . typeRange . lblValue $ NE.last ts)
     | otherwise -> start
@@ -192,6 +198,14 @@ dataCtorRange :: DataCtor a -> TokenRange
 dataCtorRange (DataCtor _ name fields)
   | [] <- fields = nameRange name
   | otherwise = (nameTok name, snd . typeRange $ last fields)
+
+derivedTypeInstancesRange :: DerivedTypeInstances a -> TokenRange
+derivedTypeInstancesRange (DerivedTypeInstances _ start _ constraints) =
+  ( start
+  , snd $ case constraints of
+    One constraint -> constraintRange constraint
+    Many constraints' -> wrappedRange constraints'
+  )
 
 classHeadRange :: ClassHead a -> TokenRange
 classHeadRange (ClassHead kw _ name vars fdeps)

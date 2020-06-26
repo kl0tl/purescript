@@ -660,10 +660,10 @@ import :: { Import () }
   | 'kind' properName {% addWarning [$1, nameTok (getProperName $2)] WarnDeprecatedKindImportSyntax *> pure (ImportKind () $1 (getProperName $2)) }
 
 decl :: { Declaration () }
-  : dataHead { DeclData () $1 Nothing }
-  | dataHead '=' sep(dataCtor, '|') { DeclData () $1 (Just ($2, $3)) }
+  : dataHead manyOrEmpty(derivedTypeInstances) { DeclData () $1 Nothing $2 }
+  | dataHead '=' sep(dataCtor, '|') manyOrEmpty(derivedTypeInstances) { DeclData () $1 (Just ($2, $3)) $4 }
   | typeHead '=' type {% checkNoWildcards $3 *> pure (DeclType () $1 $2 $3) }
-  | newtypeHead '=' properName typeAtom {% checkNoWildcards $4 *> pure (DeclNewtype () $1 $2 (getProperName $3) $4) }
+  | newtypeHead '=' properName typeAtom manyOrEmpty(derivedTypeInstances) {% checkNoWildcards $4 *> pure (DeclNewtype () $1 $2 (getProperName $3) $4 $5) }
   | classHead { either id (\h -> DeclClass () h Nothing) $1 }
   | classHead 'where' '\{' manySep(classMember, '\;') '\}' {% either (const (parseError $2)) (\h -> pure $ DeclClass () h (Just ($2, $4))) $1 }
   | instHead { DeclInstanceChain () (Separated (Instance $1 Nothing) []) }
@@ -672,7 +672,7 @@ decl :: { Declaration () }
   | 'newtype' properName '::' type {% checkNoWildcards $4 *> pure (DeclKindSignature () $1 (Labeled (getProperName $2) $3 $4)) }
   | 'type' properName '::' type {% checkNoWildcards $4 *> pure (DeclKindSignature () $1 (Labeled (getProperName $2) $3 $4)) }
   | 'derive' instHead { DeclDerive () $1 Nothing $2 }
-  | 'derive' 'newtype' instHead { DeclDerive () $1 (Just $2) $3 }
+  | 'derive' 'newtype' instHead { DeclDerive () $1 (Just (DeriveNewtype $2)) $3 }
   | ident '::' type { DeclSignature () (Labeled $1 $2 $3) }
   | ident manyOrEmpty(binderAtom) guardedDecl { DeclValue () (ValueBindingFields $1 $2 $3) }
   | fixity { DeclFixity () $1 }
@@ -693,6 +693,10 @@ newtypeHead :: { DataHead () }
 dataCtor :: { DataCtor () }
   : properName manyOrEmpty(typeAtom)
       {% for_ $2 checkNoWildcards *> pure (DataCtor () (getProperName $1) $2) }
+
+derivedTypeInstances :: { DerivedTypeInstances () }
+  : 'derive' constraints { DerivedTypeInstances () $1 Nothing $2 }
+  | 'derive' 'newtype' constraints { DerivedTypeInstances () $1 (Just (DeriveNewtype $2)) $3 }
 
 -- Class head syntax requires unbounded lookahead due to a conflict between
 -- row syntax and `typeVarBinding`. `(a :: B)` is either a row in `constraint`

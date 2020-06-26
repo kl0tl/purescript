@@ -27,6 +27,14 @@ flattenDataHead (DataHead a b c) = pure a <> flattenName b <> foldMap flattenTyp
 flattenDataCtor :: DataCtor a -> DList SourceToken
 flattenDataCtor (DataCtor _ a b) = flattenName a <> foldMap flattenType b
 
+flattenDerivingStrategy :: Maybe DerivingStrategy -> DList SourceToken
+flattenDerivingStrategy = foldMap $ \case
+  DeriveNewtype token -> pure token
+
+flattenDerivedTypeInstances :: DerivedTypeInstances a -> DList SourceToken
+flattenDerivedTypeInstances (DerivedTypeInstances _ a b c) =
+  pure a <> flattenDerivingStrategy b <> flattenOneOrDelimited flattenConstraint c
+
 flattenClassHead :: ClassHead a -> DList SourceToken
 flattenClassHead (ClassHead a b c d e) =
   pure a <>
@@ -205,16 +213,22 @@ flattenRole = pure . roleTok
 
 flattenDeclaration :: Declaration a -> DList SourceToken
 flattenDeclaration = \case
-  DeclData _ a b ->
+  DeclData _ a b c ->
     flattenDataHead a <>
-    foldMap (\(t, cs) -> pure t <> flattenSeparated flattenDataCtor cs) b
-  DeclType _ a b c ->flattenDataHead a <> pure b <> flattenType c
-  DeclNewtype _ a b c d -> flattenDataHead a <> pure b <> flattenName c <> flattenType d
+    foldMap (\(t, cs) -> pure t <> flattenSeparated flattenDataCtor cs) b <>
+    foldMap flattenDerivedTypeInstances c
+  DeclType _ a b c -> flattenDataHead a <> pure b <> flattenType c
+  DeclNewtype _ a b c d e ->
+    flattenDataHead a <>
+    pure b <>
+    flattenName c <>
+    flattenType d <>
+    foldMap flattenDerivedTypeInstances e
   DeclClass _ a b ->
     flattenClassHead a <>
     foldMap (\(c, d) -> pure c <> foldMap (flattenLabeled flattenName flattenType) d) b
   DeclInstanceChain _ a -> flattenSeparated flattenInstance a
-  DeclDerive _ a b c -> pure a <> foldMap pure b <> flattenInstanceHead c
+  DeclDerive _ a b c -> pure a <> flattenDerivingStrategy b <> flattenInstanceHead c
   DeclKindSignature _ a b -> pure a <> flattenLabeled flattenName flattenType b
   DeclSignature _ a -> flattenLabeled flattenName flattenType a
   DeclFixity _ a -> flattenFixityFields a

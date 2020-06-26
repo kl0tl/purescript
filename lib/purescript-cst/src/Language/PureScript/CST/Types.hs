@@ -193,12 +193,12 @@ data DataMembers a
   deriving (Show, Eq, Ord, Functor, Foldable, Traversable, Generic)
 
 data Declaration a
-  = DeclData a (DataHead a) (Maybe (SourceToken, Separated (DataCtor a)))
+  = DeclData a (DataHead a) (Maybe (SourceToken, Separated (DataCtor a))) [DerivedTypeInstances a]
   | DeclType a (DataHead a) SourceToken (Type a)
-  | DeclNewtype a (DataHead a) SourceToken (Name (N.ProperName 'N.ConstructorName)) (Type a)
+  | DeclNewtype a (DataHead a) SourceToken (Name (N.ProperName 'N.ConstructorName)) (Type a) [DerivedTypeInstances a]
   | DeclClass a (ClassHead a) (Maybe (SourceToken, NonEmpty (Labeled (Name Ident) (Type a))))
   | DeclInstanceChain a (Separated (Instance a))
-  | DeclDerive a SourceToken (Maybe SourceToken) (InstanceHead a)
+  | DeclDerive a SourceToken (Maybe DerivingStrategy) (InstanceHead a)
   | DeclKindSignature a SourceToken (Labeled (Name (N.ProperName 'N.TypeName)) (Type a))
   | DeclSignature a (Labeled (Name Ident) (Type a))
   | DeclValue a (ValueBindingFields a)
@@ -216,6 +216,9 @@ data InstanceBinding a
   = InstanceBindingSignature a (Labeled (Name Ident) (Type a))
   | InstanceBindingName a (ValueBindingFields a)
   deriving (Show, Eq, Ord, Functor, Foldable, Traversable, Generic)
+
+newtype DerivingStrategy = DeriveNewtype SourceToken
+  deriving (Show, Eq, Ord)
 
 data ImportDecl a = ImportDecl
   { impAnn :: a
@@ -244,6 +247,13 @@ data DataCtor a = DataCtor
   { dataCtorAnn :: a
   , dataCtorName :: Name (N.ProperName 'N.ConstructorName)
   , dataCtorFields :: [Type a]
+  } deriving (Show, Eq, Ord, Functor, Foldable, Traversable, Generic)
+
+data DerivedTypeInstances a = DerivedTypeInstances
+  { derivedTypeInstancesAnn :: a
+  , derivedTypeInstancesKeyword :: SourceToken
+  , derivedTypeInstancesStrategy :: Maybe DerivingStrategy
+  , derivedTypeInstancesConstraints :: OneOrDelimited (Constraint a)
   } deriving (Show, Eq, Ord, Functor, Foldable, Traversable, Generic)
 
 data ClassHead a = ClassHead
