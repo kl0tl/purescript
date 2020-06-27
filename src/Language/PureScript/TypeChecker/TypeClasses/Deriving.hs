@@ -1,18 +1,37 @@
--- | This module implements the generic deriving elaboration that takes place during desugaring.
-module Language.PureScript.Sugar.TypeClasses.Deriving (deriveInstances) where
+-- | This module implements the generic deriving elaboration that takes place during typechecking.
+module Language.PureScript.TypeChecker.TypeClasses.Deriving
+  ( dataEq
+  , deriveEq
+  , deriveEq1
+
+  , dataOrd
+  , deriveOrd
+  , deriveOrd1
+
+  , dataFunctor
+  , deriveFunctor
+
+  , dataNewtype
+  , deriveNewtype
+
+  , dataGenericRep
+  , deriveGenericRep
+
+  , deriveNewtypeInstance
+  ) where
 
 import           Prelude.Compat
 import           Protolude (ordNub)
 
-import           Control.Arrow (second)
 import           Control.Monad (replicateM, zipWithM, unless, when)
 import           Control.Monad.Error.Class (MonadError(..))
 import           Control.Monad.Writer.Class (MonadWriter(..))
+import           Control.Monad.State.Class (MonadState)
 import           Control.Monad.Supply.Class (MonadSupply)
 import           Data.Foldable (for_)
-import           Data.List (foldl', find, sortBy, unzip5)
+import           Data.List (foldl', sortBy, unzip5)
 import qualified Data.Map as M
-import           Data.Maybe (fromMaybe, mapMaybe)
+import qualified Data.List.NonEmpty as NEL
 import           Data.Ord (comparing)
 import qualified Data.Set as S
 import           Data.Text (Text)
@@ -22,13 +41,13 @@ import qualified Language.PureScript.Constants.Prim as C
 import           Language.PureScript.Crash
 import           Language.PureScript.Environment
 import           Language.PureScript.Errors
-import           Language.PureScript.Externs
 import           Language.PureScript.Names
 import           Language.PureScript.Label (Label(..))
 import           Language.PureScript.PSString (mkString)
 import           Language.PureScript.Types
-import           Language.PureScript.TypeChecker (checkNewtype)
-import           Language.PureScript.TypeChecker.Synonyms (SynonymMap, KindMap, replaceAllTypeSynonymsM)
+import           Language.PureScript.TypeChecker.Monad
+import           Language.PureScript.TypeChecker.Newtypes (checkNewtype)
+import           Language.PureScript.TypeClassDictionaries
 
 -- | When deriving an instance for a newtype, we must ensure that all superclass
 -- instances were derived in the same way. This data structure is used to ensure
@@ -64,153 +83,33 @@ extractNewtypeName mn xs = go (last xs) where
   go (TypeConstructor _ name) = Just (qualify mn name)
   go _ = Nothing
 
--- | Elaborates deriving instance declarations by code generation.
-deriveInstances
-  :: forall m
-   . (MonadError MultipleErrors m, MonadWriter MultipleErrors m, MonadSupply m)
-  => [ExternsFile]
-  -> Module
-  -> m Module
-deriveInstances externs (Module ss coms mn ds exts) =
-    Module ss coms mn <$> mapM (deriveInstance mn synonyms kinds instanceData ds) ds <*> pure exts
+newtypeDerivedInstances :: MonadState CheckState m => ModuleName -> m NewtypeDerivedInstances
+newtypeDerivedInstances moduleName = do
+  env <- getEnv
+  pure $ foldMap fromTypeClass (M.toList $ typeClasses env)
+      <> foldMap fromTypeInstance (foldMap (foldMap (foldMap NEL.toList . M.elems) . M.elems) . M.elems $ typeClassDictionaries env)
   where
-    kinds :: KindMap
-    kinds = mempty
-
-    -- We need to collect type synonym information, since synonyms will not be
-    -- removed until later, during type checking.
-    synonyms :: SynonymMap
-    synonyms =
-        M.fromList $ (externs >>= \ExternsFile{..} -> mapMaybe (fromExternsDecl efModuleName) efDeclarations)
-                  ++ mapMaybe fromLocalDecl ds
-      where
-        fromExternsDecl mn' (EDTypeSynonym name args ty) = Just (Qualified (Just mn') name, (args, ty))
-        fromExternsDecl _ _ = Nothing
-
-        fromLocalDecl (TypeSynonymDeclaration _ name args ty) =
-          Just (Qualified (Just mn) name, (args, ty))
-        fromLocalDecl _ = Nothing
-
-    instanceData :: NewtypeDerivedInstances
-    instanceData =
-        foldMap (\ExternsFile{..} -> foldMap (fromExternsDecl efModuleName) efDeclarations) externs <> foldMap fromLocalDecl ds
-      where
-        fromExternsDecl mn' EDClass{..} =
-          NewtypeDerivedInstances (M.singleton (mn', edClassName) (map fst edClassTypeArguments, edClassConstraints, edFunctionalDependencies)) mempty
-        fromExternsDecl mn' EDInstance{..} =
-          foldMap (\nm -> NewtypeDerivedInstances mempty (S.singleton (qualify mn' edInstanceClassName, nm))) (extractNewtypeName mn' edInstanceTypes)
-        fromExternsDecl _ _ = mempty
-
-        fromLocalDecl (TypeClassDeclaration _ cl args cons deps _) =
-          NewtypeDerivedInstances (M.singleton (mn, cl) (map fst args, cons, deps)) mempty
-        fromLocalDecl (TypeInstanceDeclaration _ _ _ _ _ cl tys _) =
-          foldMap (\nm -> NewtypeDerivedInstances mempty (S.singleton (qualify mn cl, nm))) (extractNewtypeName mn tys)
-        fromLocalDecl _ = mempty
-
--- | Takes a declaration, and if the declaration is a deriving TypeInstanceDeclaration,
--- elaborates that into an instance declaration via code generation.
-deriveInstance
-  :: (MonadError MultipleErrors m, MonadWriter MultipleErrors m, MonadSupply m)
-  => ModuleName
-  -> SynonymMap
-  -> KindMap
-  -> NewtypeDerivedInstances
-  -> [Declaration]
-  -> Declaration
-  -> m Declaration
-deriveInstance mn syns kinds _ ds (TypeInstanceDeclaration sa@(ss, _) ch idx nm deps className tys DerivedInstance)
-  | className == Qualified (Just dataEq) (ProperName "Eq")
-  = case tys of
-      [ty] | Just (Qualified mn' tyCon, _) <- unwrapTypeConstructor ty
-           , mn == fromMaybe mn mn'
-           -> TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance <$> deriveEq ss mn syns kinds ds tyCon
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataEq) (ProperName "Eq1")
-  = case tys of
-      [ty] | Just (Qualified mn' _, _) <- unwrapTypeConstructor ty
-           , mn == fromMaybe mn mn'
-           -> pure . TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance $ deriveEq1 ss
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataOrd) (ProperName "Ord")
-  = case tys of
-      [ty] | Just (Qualified mn' tyCon, _) <- unwrapTypeConstructor ty
-           , mn == fromMaybe mn mn'
-           -> TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance <$> deriveOrd ss mn syns kinds ds tyCon
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataOrd) (ProperName "Ord1")
-  = case tys of
-      [ty] | Just (Qualified mn' _, _) <- unwrapTypeConstructor ty
-           , mn == fromMaybe mn mn'
-           -> pure . TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance $ deriveOrd1 ss
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataFunctor) (ProperName "Functor")
-  = case tys of
-      [ty] | Just (Qualified mn' tyCon, _) <- unwrapTypeConstructor ty
-           , mn == fromMaybe mn mn'
-           -> TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance <$> deriveFunctor ss mn syns kinds ds tyCon
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataNewtype) (ProperName "Newtype")
-  = case tys of
-      [wrappedTy, unwrappedTy]
-        | Just (Qualified mn' tyCon, args) <- unwrapTypeConstructor wrappedTy
-        , mn == fromMaybe mn mn'
-        -> do (inst, actualUnwrappedTy) <- deriveNewtype ss mn syns kinds ds tyCon args unwrappedTy
-              return $ TypeInstanceDeclaration sa ch idx nm deps className [wrappedTy, actualUnwrappedTy] (ExplicitInstance inst)
-        | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys wrappedTy
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 2
-  | className == Qualified (Just dataGenericRep) (ProperName C.generic)
-  = case tys of
-      [actualTy, repTy]
-        | Just (Qualified mn' tyCon, args) <- unwrapTypeConstructor actualTy
-        , mn == fromMaybe mn mn'
-        -> do (inst, inferredRepTy) <- deriveGenericRep ss mn syns kinds ds tyCon args repTy
-              return $ TypeInstanceDeclaration sa ch idx nm deps className [actualTy, inferredRepTy] (ExplicitInstance inst)
-        | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys actualTy
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 2
-  | otherwise = throwError . errorMessage' ss $ CannotDerive className tys
-deriveInstance mn syns kinds ndis ds (TypeInstanceDeclaration sa@(ss, _) ch idx nm deps className tys NewtypeInstance) =
-  case tys of
-    _ : _ | Just (Qualified mn' tyCon, args) <- unwrapTypeConstructor (last tys)
-          , mn == fromMaybe mn mn'
-          -> TypeInstanceDeclaration sa ch idx nm deps className tys . NewtypeInstanceWithDictionary <$> deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyCon args
-          | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys (last tys)
-    _ -> throwError . errorMessage' ss $ InvalidNewtypeInstance className tys
-deriveInstance _ _ _ _ _ e = return e
-
-unwrapTypeConstructor :: SourceType -> Maybe (Qualified (ProperName 'TypeName), [SourceType])
-unwrapTypeConstructor = fmap (second reverse) . go
-  where
-  go (TypeConstructor _ tyCon) = Just (tyCon, [])
-  go (TypeApp _ ty arg) = do
-    (tyCon, args) <- go ty
-    return (tyCon, arg : args)
-  go _ = Nothing
+    fromTypeClass (qualifiedClassName, TypeClassData{..}) =
+      NewtypeDerivedInstances (M.singleton (qualify moduleName qualifiedClassName) (map fst typeClassArguments, typeClassSuperclasses, typeClassDependencies)) mempty
+    fromTypeInstance TypeClassDictionaryInScope{..} =
+      foldMap (\name -> NewtypeDerivedInstances mempty (S.singleton (qualify moduleName tcdClassName, name))) (extractNewtypeName moduleName tcdInstanceTypes)
 
 deriveNewtypeInstance
   :: forall m
-   . (MonadError MultipleErrors m, MonadWriter MultipleErrors m)
+   . (MonadState CheckState m, MonadError MultipleErrors m, MonadWriter MultipleErrors m)
   => SourceSpan
   -> ModuleName
-  -> SynonymMap
-  -> KindMap
-  -> NewtypeDerivedInstances
   -> Qualified (ProperName 'ClassName)
-  -> [Declaration]
   -> [SourceType]
   -> ProperName 'TypeName
   -> [SourceType]
   -> m Expr
-deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyConNm dargs = do
+deriveNewtypeInstance ss mn className tys tyConNm dargs = do
     verifySuperclasses
-    tyCon <- findTypeDecl ss tyConNm ds
+    tyCon <- lookupTypeDecl ss mn tyConNm
     go tyCon
   where
-    go (DataDeclaration _ Newtype _ tyArgNames [(DataConstructorDeclaration _ _ [(_, wrapped)])]) = do
+    go (Just Newtype, tyArgNames, [(_, [wrapped])]) = do
       -- The newtype might not be applied to all type arguments.
       -- This is okay as long as the newtype wraps something which ends with
       -- sufficiently many type applications to variables.
@@ -220,11 +119,10 @@ deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyConNm dargs = do
       --
       -- since Array a is a type application which uses the last
       -- type argument
-      wrapped' <- replaceAllTypeSynonymsM syns kinds wrapped
-      case stripRight (takeReverse (length tyArgNames - length dargs) tyArgNames) wrapped' of
-        Just wrapped'' -> do
+      case stripRight (takeReverse (length tyArgNames - length dargs) tyArgNames) wrapped of
+        Just wrapped' -> do
           let subst = zipWith (\(name, _) t -> (name, t)) tyArgNames dargs
-          return (DeferredDictionary className (init tys ++ [replaceAllTypeVars subst wrapped'']))
+          return (DeferredDictionary className (init tys ++ [replaceAllTypeVars subst wrapped']))
         Nothing -> throwError . errorMessage' ss $ InvalidNewtypeInstance className tys
     go _ = throwError . errorMessage' ss $ InvalidNewtypeInstance className tys
 
@@ -238,11 +136,12 @@ deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyConNm dargs = do
     stripRight _ _ = Nothing
 
     verifySuperclasses :: m ()
-    verifySuperclasses =
-      for_ (M.lookup (qualify mn className) (ndiClasses ndis)) $ \(args, superclasses, _) ->
+    verifySuperclasses = do
+      NewtypeDerivedInstances{..} <- newtypeDerivedInstances mn
+      for_ (M.lookup (qualify mn className) ndiClasses) $ \(args, superclasses, _) ->
         for_ superclasses $ \Constraint{..} -> do
           let constraintClass' = qualify (error "verifySuperclasses: unknown class module") constraintClass
-          for_ (M.lookup constraintClass' (ndiClasses ndis)) $ \(_, _, deps) ->
+          for_ (M.lookup constraintClass' ndiClasses) $ \(_, _, deps) ->
             -- We need to check whether the newtype is mentioned, because of classes like MonadWriter
             -- with its Monoid superclass constraint.
             when (not (null args) && any ((last args `elem`) . usedTypeVariables) constraintArgs) $ do
@@ -258,74 +157,58 @@ deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyConNm dargs = do
                   -- check, since the superclass might have multiple type arguments, so overlaps might still
                   -- be possible, so we warn again.
                   for_ (extractNewtypeName mn tys) $ \nm ->
-                    unless ((constraintClass', nm) `S.member` ndiDerivedInstances ndis) $
+                    unless ((constraintClass', nm) `S.member` ndiDerivedInstances) $
                       tell . errorMessage' ss $ MissingNewtypeSuperclassInstance constraintClass className tys
                 else tell . errorMessage' ss $ UnverifiableSuperclassInstance constraintClass className tys
-
-dataGenericRep :: ModuleName
-dataGenericRep = ModuleName "Data.Generic.Rep"
-
-dataEq :: ModuleName
-dataEq = ModuleName "Data.Eq"
-
-dataOrd :: ModuleName
-dataOrd = ModuleName "Data.Ord"
-
-dataNewtype :: ModuleName
-dataNewtype = ModuleName "Data.Newtype"
-
-dataFunctor :: ModuleName
-dataFunctor = ModuleName "Data.Functor"
 
 unguarded :: Expr -> [GuardedExpr]
 unguarded e = [MkUnguarded e]
 
+dataGenericRep :: ModuleName
+dataGenericRep = ModuleName "Data.Generic.Rep"
+
 deriveGenericRep
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadState CheckState m, MonadError MultipleErrors m, MonadSupply m)
   => SourceSpan
   -> ModuleName
-  -> SynonymMap
-  -> KindMap
-  -> [Declaration]
   -> ProperName 'TypeName
   -> [SourceType]
   -> SourceType
   -> m ([Declaration], SourceType)
-deriveGenericRep ss mn syns kinds ds tyConNm tyConArgs repTy = do
+deriveGenericRep ss mn tyConNm tyConArgs repTy = do
     checkIsWildcard ss tyConNm repTy
-    go =<< findTypeDecl ss tyConNm ds
+    go =<< lookupTypeDecl ss mn tyConNm
   where
-    go :: Declaration -> m ([Declaration], SourceType)
-    go (DataDeclaration (ss', _) _ _ args dctors) = do
+    go :: (Maybe DataDeclType, [(Text, Maybe SourceType)], [(ProperName 'ConstructorName, [SourceType])]) -> m ([Declaration], SourceType)
+    go (_, args, dctors) = do
       x <- freshIdent "x"
       (reps, to, from) <- unzip3 <$> traverse makeInst dctors
       let rep = toRepTy reps
           inst | null reps =
                    -- If there are no cases, spin
-                   [ ValueDecl (ss', []) (Ident "to") Public [] $ unguarded $
-                      lamCase ss' x
+                   [ ValueDecl (ss, []) (Ident "to") Public [] $ unguarded $
+                      lamCase ss x
                         [ CaseAlternative
                             [NullBinder]
-                            (unguarded (App toName (Var ss' (Qualified Nothing x))))
+                            (unguarded (App toName (Var ss (Qualified Nothing x))))
                         ]
-                   , ValueDecl (ss', []) (Ident "from") Public [] $ unguarded $
-                      lamCase ss' x
+                   , ValueDecl (ss, []) (Ident "from") Public [] $ unguarded $
+                      lamCase ss x
                         [ CaseAlternative
                             [NullBinder]
-                            (unguarded (App fromName (Var ss' (Qualified Nothing x))))
+                            (unguarded (App fromName (Var ss (Qualified Nothing x))))
                         ]
                    ]
                | otherwise =
-                   [ ValueDecl (ss', []) (Ident "to") Public [] $ unguarded $
-                       lamCase ss' x (zipWith ($) (map underBinder (sumBinders (length dctors))) to)
-                   , ValueDecl (ss', []) (Ident "from") Public [] $ unguarded $
-                       lamCase ss' x (zipWith ($) (map underExpr (sumExprs (length dctors))) from)
+                   [ ValueDecl (ss, []) (Ident "to") Public [] $ unguarded $
+                       lamCase ss x (zipWith ($) (map underBinder (sumBinders (length dctors))) to)
+                   , ValueDecl (ss, []) (Ident "from") Public [] $ unguarded $
+                       lamCase ss x (zipWith ($) (map underExpr (sumExprs (length dctors))) from)
                    ]
 
           subst = zipWith ((,) . fst) args tyConArgs
       return (inst, replaceAllTypeVars subst rep)
-    go _ = internalError "deriveGenericRep go: expected DataDeclaration"
 
     select :: (a -> a) -> (a -> a) -> Int -> [a -> a]
     select _ _ 0 = []
@@ -343,11 +226,10 @@ deriveGenericRep ss mn syns kinds ds tyConNm tyConArgs repTy = do
     compN n f = f . compN (n - 1) f
 
     makeInst
-      :: DataConstructorDeclaration
+      :: (ProperName 'ConstructorName, [SourceType])
       -> m (SourceType, CaseAlternative, CaseAlternative)
-    makeInst (DataConstructorDeclaration _ ctorName args) = do
-        args' <- mapM (replaceAllTypeSynonymsM syns kinds . snd) args
-        (ctorTy, matchProduct, ctorArgs, matchCtor, mkProduct) <- makeProduct args'
+    makeInst (ctorName, args) = do
+        (ctorTy, matchProduct, ctorArgs, matchCtor, mkProduct) <- makeProduct args
         return ( srcTypeApp (srcTypeApp (srcTypeConstructor constructor)
                                   (srcTypeLevelString $ mkString (runProperName ctorName)))
                          ctorTy
@@ -437,27 +319,26 @@ checkIsWildcard _ _ (TypeWildcard _ Nothing) = return ()
 checkIsWildcard ss tyConNm _ =
   throwError . errorMessage' ss $ ExpectedWildcard tyConNm
 
+dataEq :: ModuleName
+dataEq = ModuleName "Data.Eq"
+
 deriveEq
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadState CheckState m, MonadError MultipleErrors m, MonadSupply m)
   => SourceSpan
   -> ModuleName
-  -> SynonymMap
-  -> KindMap
-  -> [Declaration]
   -> ProperName 'TypeName
   -> m [Declaration]
-deriveEq ss mn syns kinds ds tyConNm = do
-  tyCon <- findTypeDecl ss tyConNm ds
+deriveEq ss mn tyConNm = do
+  tyCon <- lookupTypeDecl ss mn tyConNm
   eqFun <- mkEqFunction tyCon
   return [ ValueDecl (ss, []) (Ident C.eq) Public [] (unguarded eqFun) ]
   where
-    mkEqFunction :: Declaration -> m Expr
-    mkEqFunction (DataDeclaration (ss', _) _ _ _ args) = do
+    mkEqFunction :: (Maybe DataDeclType, [(Text, Maybe SourceType)], [(ProperName 'ConstructorName, [SourceType])]) -> m Expr
+    mkEqFunction (_, _, ctors) = do
       x <- freshIdent "x"
       y <- freshIdent "y"
-      lamCase2 ss' x y <$> (addCatch <$> mapM mkCtorClause args)
-    mkEqFunction _ = internalError "mkEqFunction: expected DataDeclaration"
+      lamCase2 ss x y <$> (addCatch <$> mapM mkCtorClause ctors)
 
     preludeConj :: Expr -> Expr -> Expr
     preludeConj = App . App (Var ss (Qualified (Just (ModuleName "Data.HeytingAlgebra")) (Ident C.conj)))
@@ -475,12 +356,11 @@ deriveEq ss mn syns kinds ds tyConNm = do
       where
       catchAll = CaseAlternative [NullBinder, NullBinder] (unguarded (Literal ss (BooleanLiteral False)))
 
-    mkCtorClause :: DataConstructorDeclaration -> m CaseAlternative
-    mkCtorClause (DataConstructorDeclaration _ ctorName tys) = do
+    mkCtorClause :: (ProperName 'ConstructorName, [SourceType]) -> m CaseAlternative
+    mkCtorClause (ctorName, tys) = do
       identsL <- replicateM (length tys) (freshIdent "l")
       identsR <- replicateM (length tys) (freshIdent "r")
-      tys' <- mapM (replaceAllTypeSynonymsM syns kinds . snd) tys
-      let tests = zipWith3 toEqTest (map (Var ss . Qualified Nothing) identsL) (map (Var ss . Qualified Nothing) identsR) tys'
+      let tests = zipWith3 toEqTest (map (Var ss . Qualified Nothing) identsL) (map (Var ss . Qualified Nothing) identsR) tys
       return $ CaseAlternative [caseBinder identsL, caseBinder identsR] (unguarded (conjAll tests))
       where
       caseBinder idents = ConstructorBinder ss (Qualified (Just mn) ctorName) (map (VarBinder ss) idents)
@@ -506,27 +386,26 @@ deriveEq1 ss =
     preludeEq :: Expr
     preludeEq = Var ss (Qualified (Just dataEq) (Ident C.eq))
 
+dataOrd :: ModuleName
+dataOrd = ModuleName "Data.Ord"
+
 deriveOrd
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadState CheckState m, MonadError MultipleErrors m, MonadSupply m)
   => SourceSpan
   -> ModuleName
-  -> SynonymMap
-  -> KindMap
-  -> [Declaration]
   -> ProperName 'TypeName
   -> m [Declaration]
-deriveOrd ss mn syns kinds ds tyConNm = do
-  tyCon <- findTypeDecl ss tyConNm ds
+deriveOrd ss mn tyConNm = do
+  tyCon <- lookupTypeDecl ss mn tyConNm
   compareFun <- mkCompareFunction tyCon
   return [ ValueDecl (ss, []) (Ident C.compare) Public [] (unguarded compareFun) ]
   where
-    mkCompareFunction :: Declaration -> m Expr
-    mkCompareFunction (DataDeclaration (ss', _) _ _ _ args) = do
+    mkCompareFunction :: (Maybe DataDeclType, [(Text, Maybe SourceType)], [(ProperName 'ConstructorName, [SourceType])]) -> m Expr
+    mkCompareFunction (_, _, ctors) = do
       x <- freshIdent "x"
       y <- freshIdent "y"
-      lamCase2 ss' x y <$> (addCatch . concat <$> mapM mkCtorClauses (splitLast args))
-    mkCompareFunction _ = internalError "mkCompareFunction: expected DataDeclaration"
+      lamCase2 ss x y <$> (addCatch . concat <$> mapM mkCtorClauses (splitLast ctors))
 
     splitLast :: [a] -> [(a, Bool)]
     splitLast [] = []
@@ -555,12 +434,11 @@ deriveOrd ss mn syns kinds ds tyConNm = do
     ordCompare1 :: Expr -> Expr -> Expr
     ordCompare1 = App . App (Var ss (Qualified (Just dataOrd) (Ident C.compare1)))
 
-    mkCtorClauses :: (DataConstructorDeclaration, Bool) -> m [CaseAlternative]
-    mkCtorClauses ((DataConstructorDeclaration _ ctorName tys), isLast) = do
+    mkCtorClauses :: ((ProperName 'ConstructorName, [SourceType]), Bool) -> m [CaseAlternative]
+    mkCtorClauses ((ctorName, tys), isLast) = do
       identsL <- replicateM (length tys) (freshIdent "l")
       identsR <- replicateM (length tys) (freshIdent "r")
-      tys' <- mapM (replaceAllTypeSynonymsM syns kinds . snd) tys
-      let tests = zipWith3 toOrdering (map (Var ss . Qualified Nothing) identsL) (map (Var ss . Qualified Nothing) identsR) tys'
+      let tests = zipWith3 toOrdering (map (Var ss . Qualified Nothing) identsL) (map (Var ss . Qualified Nothing) identsR) tys
           extras | not isLast = [ CaseAlternative [ ConstructorBinder ss (Qualified (Just mn) ctorName) (replicate (length tys) NullBinder)
                                                   , NullBinder
                                                   ]
@@ -608,56 +486,58 @@ deriveOrd1 ss =
     dataOrdCompare :: Expr
     dataOrdCompare = Var ss (Qualified (Just dataOrd) (Ident C.compare))
 
+dataNewtype :: ModuleName
+dataNewtype = ModuleName "Data.Newtype"
+
 deriveNewtype
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadState CheckState m, MonadError MultipleErrors m, MonadSupply m)
   => SourceSpan
   -> ModuleName
-  -> SynonymMap
-  -> KindMap
-  -> [Declaration]
   -> ProperName 'TypeName
   -> [SourceType]
   -> SourceType
   -> m ([Declaration], SourceType)
-deriveNewtype ss mn syns kinds ds tyConNm tyConArgs unwrappedTy = do
+deriveNewtype ss mn tyConNm tyConArgs unwrappedTy = do
     checkIsWildcard ss tyConNm unwrappedTy
-    go =<< findTypeDecl ss tyConNm ds
+    go =<< lookupTypeDecl ss mn tyConNm
   where
-    go :: Declaration -> m ([Declaration], SourceType)
-    go (DataDeclaration (ss', _) Data name _ _) =
-      throwError . errorMessage' ss' $ CannotDeriveNewtypeForData name
-    go (DataDeclaration (ss', _) Newtype name args dctors) = do
-      checkNewtype name dctors
+    go :: (Maybe DataDeclType, [(Text, Maybe SourceType)], [(ProperName 'ConstructorName, [SourceType])]) -> m ([Declaration], SourceType)
+    go (Just Newtype, args, dctors) = do
+      checkNewtype tyConNm dctors
       wrappedIdent <- freshIdent "n"
       unwrappedIdent <- freshIdent "a"
-      let (DataConstructorDeclaration _ ctorName [(_, ty)]) = head dctors
-      ty' <- replaceAllTypeSynonymsM syns kinds ty
+      let (ctorName, [ty]) = head dctors
       let inst =
-            [ ValueDecl (ss', []) (Ident "wrap") Public [] $ unguarded $
-                Constructor ss' (Qualified (Just mn) ctorName)
-            , ValueDecl (ss', []) (Ident "unwrap") Public [] $ unguarded $
-                lamCase ss' wrappedIdent
+            [ ValueDecl (ss, []) (Ident "wrap") Public [] $ unguarded $
+                Constructor ss (Qualified (Just mn) ctorName)
+            , ValueDecl (ss, []) (Ident "unwrap") Public [] $ unguarded $
+                lamCase ss wrappedIdent
                   [ CaseAlternative
-                      [ConstructorBinder ss' (Qualified (Just mn) ctorName) [VarBinder ss' unwrappedIdent]]
-                      (unguarded (Var ss' (Qualified Nothing unwrappedIdent)))
+                      [ConstructorBinder ss (Qualified (Just mn) ctorName) [VarBinder ss unwrappedIdent]]
+                      (unguarded (Var ss (Qualified Nothing unwrappedIdent)))
                   ]
             ]
           subst = zipWith ((,) . fst) args tyConArgs
-      return (inst, replaceAllTypeVars subst ty')
-    go _ = internalError "deriveNewtype go: expected DataDeclaration"
+      return (inst, replaceAllTypeVars subst ty)
+    go _ = throwError . errorMessage' ss $ CannotDeriveNewtypeForData tyConNm
 
-findTypeDecl
-  :: (MonadError MultipleErrors m)
+lookupTypeDecl :: (MonadState CheckState m, MonadError MultipleErrors m)
   => SourceSpan
+  -> ModuleName
   -> ProperName 'TypeName
-  -> [Declaration]
-  -> m Declaration
-findTypeDecl ss tyConNm = maybe (throwError . errorMessage' ss $ CannotFindDerivingType tyConNm) return . find isTypeDecl
-  where
-  isTypeDecl :: Declaration -> Bool
-  isTypeDecl (DataDeclaration _ _ nm _ _) | nm == tyConNm = True
-  isTypeDecl _ = False
+  -> m (Maybe DataDeclType, [(Text, Maybe SourceType)], [(ProperName 'ConstructorName, [SourceType])])
+lookupTypeDecl ss moduleName typeName = do
+  env <- getEnv
+  maybe (throwError . errorMessage' ss $ CannotFindDerivingType typeName) pure $ do
+    (_, DataType args dctors) <- M.lookup (Qualified (Just moduleName) typeName) (types env)
+    pure ( (\(dtype, _, _, _) -> dtype) <$> case dctors of
+              (ctorName, _) : _ ->
+                M.lookup (Qualified (Just moduleName) ctorName) (dataConstructors env)
+              _ -> Nothing
+         , map (\(v, k, _) -> (v, k)) args
+         , dctors
+         )
 
 lam :: SourceSpan -> Ident -> Expr -> Expr
 lam ss = Abs . VarBinder ss
@@ -693,35 +573,33 @@ decomposeRec' = sortBy (comparing fst) . go
   where go (RCons _ str typ typs) = (str, typ) : go typs
         go _ = []
 
+dataFunctor :: ModuleName
+dataFunctor = ModuleName "Data.Functor"
+
 deriveFunctor
   :: forall m
-   . (MonadError MultipleErrors m, MonadSupply m)
+   . (MonadState CheckState m, MonadError MultipleErrors m, MonadSupply m)
   => SourceSpan
   -> ModuleName
-  -> SynonymMap
-  -> KindMap
-  -> [Declaration]
   -> ProperName 'TypeName
   -> m [Declaration]
-deriveFunctor ss mn syns kinds ds tyConNm = do
-  tyCon <- findTypeDecl ss tyConNm ds
+deriveFunctor ss mn tyConNm = do
+  tyCon <- lookupTypeDecl ss mn tyConNm
   mapFun <- mkMapFunction tyCon
   return [ ValueDecl (ss, []) (Ident C.map) Public [] (unguarded mapFun) ]
   where
-    mkMapFunction :: Declaration -> m Expr
-    mkMapFunction (DataDeclaration (ss', _) _ _ tys ctors) = case reverse tys of
-      [] -> throwError . errorMessage' ss' $ KindsDoNotUnify (kindType -:> kindType) kindType
+    mkMapFunction :: (Maybe DataDeclType, [(Text, Maybe SourceType)], [(ProperName 'ConstructorName, [SourceType])]) -> m Expr
+    mkMapFunction (_, tys, ctors) = case reverse tys of
+      [] -> throwError . errorMessage' ss $ KindsDoNotUnify (kindType -:> kindType) kindType
       ((iTy, _) : _) -> do
         f <- freshIdent "f"
         m <- freshIdent "m"
-        lam ss' f . lamCase ss' m <$> mapM (mkCtorClause iTy f) ctors
-    mkMapFunction _ = internalError "mkMapFunction: expected DataDeclaration"
+        lam ss f . lamCase ss m <$> mapM (mkCtorClause iTy f) ctors
 
-    mkCtorClause :: Text -> Ident -> DataConstructorDeclaration -> m CaseAlternative
-    mkCtorClause iTyName f (DataConstructorDeclaration _ ctorName ctorTys) = do
+    mkCtorClause :: Text -> Ident -> (ProperName 'ConstructorName, [SourceType]) -> m CaseAlternative
+    mkCtorClause iTyName f (ctorName, ctorTys) = do
       idents <- replicateM (length ctorTys) (freshIdent "v")
-      ctorTys' <- mapM (replaceAllTypeSynonymsM syns kinds . snd) ctorTys
-      args <- zipWithM transformArg idents ctorTys'
+      args <- zipWithM transformArg idents ctorTys
       let ctor = Constructor ss (Qualified (Just mn) ctorName)
           rebuilt = foldl' App ctor args
           caseBinder = ConstructorBinder ss (Qualified (Just mn) ctorName) (VarBinder ss <$> idents)
@@ -730,7 +608,6 @@ deriveFunctor ss mn syns kinds ds tyConNm = do
         fVar = mkVar ss f
         mapVar = mkVarMn ss (Just dataFunctor) (Ident C.map)
 
-        -- TODO: deal with type synonyms, ala https://github.com/purescript/purescript/pull/2516
         transformArg :: Ident -> SourceType -> m Expr
         transformArg ident = fmap (foldr App (mkVar ss ident)) . goType where
 

@@ -469,9 +469,6 @@ data TypeInstanceBody
   -- ^ This is a derived instance
   | NewtypeInstance
   -- ^ This is an instance derived from a newtype
-  | NewtypeInstanceWithDictionary Expr
-  -- ^ This is an instance derived from a newtype, desugared to include a
-  -- dictionary for the type under the newtype.
   | ExplicitInstance [Declaration]
   -- ^ This is a regular (explicit) instance
   deriving (Show)

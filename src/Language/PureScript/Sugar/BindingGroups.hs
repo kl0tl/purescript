@@ -84,7 +84,7 @@ createBindingGroups moduleName = mapM f <=< handleDecls
                    | otherwise = []
           in (d, (name, isSig), self ++ deps)
         dataVerts = fmap mkVert allDecls
-    dataBindingGroupDecls <- parU (stronglyConnComp dataVerts) toDataBindingGroup
+    dataBindingGroupDecls <- parU (stronglyConnComp dataVerts) $ toDataBindingGroup moduleName
     let allIdents = fmap valdeclIdent values
         valueVerts = fmap (\d -> (d, valdeclIdent d, usedIdents moduleName d `intersect` allIdents)) values
     bindingGroupDecls <- parU (stronglyConnComp valueVerts) (toBindingGroup moduleName)
@@ -214,14 +214,17 @@ toBindingGroup moduleName (CyclicSCC ds') = do
 
 toDataBindingGroup
   :: MonadError MultipleErrors m
-  => SCC Declaration
+  => ModuleName
+  -> SCC Declaration
   -> m Declaration
-toDataBindingGroup (AcyclicSCC d) = return d
-toDataBindingGroup (CyclicSCC [d]) = case isTypeSynonym d of
-  Just pn -> throwError . errorMessage' (declSourceSpan d) $ CycleInTypeSynonym (Just pn)
-  _ -> return d
-toDataBindingGroup (CyclicSCC ds')
+toDataBindingGroup _ (AcyclicSCC d) = return d
+toDataBindingGroup moduleName (CyclicSCC [d])
+  | Just pn <- isTypeSynonym d = throwError . errorMessage' (declSourceSpan d) $ CycleInTypeSynonym (Just pn)
+  | Just qn <- isTypeClass moduleName d = throwError . errorMessage' (declSourceSpan d) $ CycleInTypeClassDeclaration [qn]
+  | otherwise = return d
+toDataBindingGroup moduleName (CyclicSCC ds')
   | all (isJust . isTypeSynonym) ds' = throwError . errorMessage' (declSourceSpan (head ds')) $ CycleInTypeSynonym Nothing
+  | qns@(_ : _) <- mapMaybe (isTypeClass moduleName) ds' = throwError . errorMessage' (declSourceSpan (head ds')) $ CycleInTypeClassDeclaration qns
   | kds@((ss, _):_) <- concatMap kindDecl ds' = throwError . errorMessage' ss . CycleInKindDeclaration $ fmap snd kds
   | otherwise = return . DataBindingGroupDeclaration $ NEL.fromList ds'
   where
@@ -231,6 +234,10 @@ toDataBindingGroup (CyclicSCC ds')
 isTypeSynonym :: Declaration -> Maybe (ProperName 'TypeName)
 isTypeSynonym (TypeSynonymDeclaration _ pn _ _) = Just pn
 isTypeSynonym _ = Nothing
+
+isTypeClass :: ModuleName -> Declaration -> Maybe (Qualified (ProperName 'ClassName))
+isTypeClass moduleName (TypeClassDeclaration _ pn _ _ _ _) = Just $ Qualified (Just moduleName) pn
+isTypeClass _ _ = Nothing
 
 mkDeclaration :: ValueDeclarationData Expr -> Declaration
 mkDeclaration = ValueDeclaration . fmap (pure . MkUnguarded)
