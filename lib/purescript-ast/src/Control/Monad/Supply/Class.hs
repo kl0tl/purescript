@@ -6,6 +6,7 @@ module Control.Monad.Supply.Class where
 
 import Prelude.Compat
 
+import Control.Monad.Reader
 import Control.Monad.Supply
 import Control.Monad.State
 import Control.Monad.Writer
@@ -26,6 +27,7 @@ instance Monad m => MonadSupply (SupplyT m) where
     return n
   peek = SupplyT get
 
+instance MonadSupply m => MonadSupply (ReaderT s m)
 instance MonadSupply m => MonadSupply (StateT s m)
 instance (Monoid w, MonadSupply m) => MonadSupply (WriterT w m)
 

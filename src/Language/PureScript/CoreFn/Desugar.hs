@@ -24,7 +24,8 @@ import Language.PureScript.CoreFn.Module
 import Language.PureScript.Crash
 import Language.PureScript.Environment
 import Language.PureScript.Names
-import Language.PureScript.Sugar.TypeClasses (typeClassMemberName, superClassDictionaryNames)
+import Language.PureScript.Sugar.TypeClasses (superClassDictionaryNames)
+import Language.PureScript.Sugar.TypeInstances (typeClassMemberName)
 import Language.PureScript.Types
 import Language.PureScript.PSString (mkString)
 import qualified Language.PureScript.AST as A

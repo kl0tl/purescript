@@ -67,7 +67,9 @@ extractNewtypeName mn xs = go (last xs) where
 -- | Elaborates deriving instance declarations by code generation.
 deriveInstances
   :: forall m
-   . (MonadError MultipleErrors m, MonadWriter MultipleErrors m, MonadSupply m)
+   . MonadError MultipleErrors m
+  => MonadWriter MultipleErrors m
+  => MonadSupply m
   => [ExternsFile]
   -> Module
   -> m Module
