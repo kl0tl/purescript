@@ -367,9 +367,9 @@ traverseDataCtorFields f DataConstructorDeclaration{..} = DataConstructorDeclara
 --
 data Declaration
   -- |
-  -- A data type declaration (data or newtype, name, arguments, data constructors)
+  -- A data type declaration (data or newtype, name, arguments, data constructors, derived instances)
   --
-  = DataDeclaration SourceAnn DataDeclType (ProperName 'TypeName) [(Text, Maybe SourceType)] [DataConstructorDeclaration]
+  = DataDeclaration SourceAnn DataDeclType (ProperName 'TypeName) [(Text, Maybe SourceType)] [DataConstructorDeclaration] [DataDerivedTypeInstancesDeclaration]
   -- |
   -- A minimal mutually recursive set of data type declarations
   --
@@ -428,6 +428,14 @@ data Declaration
   | TypeInstanceDeclaration SourceAnn [TypeInstanceName] Integer TypeInstanceName [SourceConstraint] (Qualified (ProperName 'ClassName)) [SourceType] TypeInstanceBody
   deriving (Show)
 
+data DataDerivedTypeInstancesDeclaration
+  = DataDerivedTypeInstancesDeclaration SourceAnn (Maybe DerivingStrategy) [DataDerivedTypeInstance]
+  deriving (Show)
+
+data DataDerivedTypeInstance
+  = DataDerivedTypeInstance SourceAnn TypeInstanceName (Qualified (ProperName 'ClassName)) [SourceType]
+  deriving (Show)
+
 data ValueFixity = ValueFixity Fixity (Qualified (Either Ident (ProperName 'ConstructorName))) (OpName 'ValueOpName)
   deriving (Eq, Ord, Show)
 
@@ -456,12 +464,13 @@ getTypeInstanceName AnonymousTypeInstance = Nothing
 getTypeInstanceName (ImplicitTypeInstanceName name) = Just name
 getTypeInstanceName (ExplicitTypeInstanceName name) = Just name
 
+data DerivingStrategy = DeriveNewtype
+  deriving (Show)
+
 -- | The members of a type class instance declaration
 data TypeInstanceBody
-  = DerivedInstance
+  = DerivedInstance (Maybe (DerivingStrategy))
   -- ^ This is a derived instance
-  | NewtypeInstance
-  -- ^ This is an instance derived from a newtype
   | NewtypeInstanceWithDictionary Expr
   -- ^ This is an instance derived from a newtype, desugared to include a
   -- dictionary for the type under the newtype.

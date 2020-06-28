@@ -444,7 +444,7 @@ convertBinder fileName = go
 
 convertDeclaration :: String -> Declaration a -> [AST.Declaration]
 convertDeclaration fileName decl = case decl of
-  DeclData _ hd@(DataHead _ a vars) bd insts ->
+  DeclData _ (DataHead _ a vars) bd insts ->
     let
       ctrs :: SourceToken -> DataCtor a -> [(SourceToken, DataCtor a)] -> [AST.DataConstructorDeclaration]
       ctrs st (DataCtor _ name fields) tl
@@ -453,17 +453,15 @@ convertDeclaration fileName decl = case decl of
             [] -> []
             (st', ctor) : tl' -> ctrs st' ctor tl'
           )
-    in AST.DataDeclaration ann Env.Data (nameValue a) (goTypeVar <$> vars) (maybe [] (\(st, Separated h tl) -> ctrs st h tl) bd)
-       : (insts >>= convertDerivedTypeInstances fileName hd)
+    in AST.DataDeclaration ann Env.Data (nameValue a) (goTypeVar <$> vars) (maybe [] (\(st, Separated h tl) -> ctrs st h tl) bd) (convertDerivedTypeInstances fileName <$> insts)
   DeclType _ (DataHead _ a vars) _ bd ->
     pure $ AST.TypeSynonymDeclaration ann
       (nameValue a)
       (goTypeVar <$> vars)
       (convertType fileName bd)
-  DeclNewtype _ hd@(DataHead _ a vars) st x ys insts ->
+  DeclNewtype _ (DataHead _ a vars) st x ys insts ->
     let ctrs = [AST.DataConstructorDeclaration (sourceAnnCommented fileName st (snd $ declRange decl)) (nameValue x) [(head ctrFields, convertType fileName ys)]]
-    in AST.DataDeclaration ann Env.Newtype (nameValue a) (goTypeVar <$> vars) ctrs
-       : (insts >>= convertDerivedTypeInstances fileName hd)
+    in AST.DataDeclaration ann Env.Newtype (nameValue a) (goTypeVar <$> vars) ctrs (convertDerivedTypeInstances fileName <$> insts)
   DeclClass _ (ClassHead _ sup name vars fdeps) bd -> do
     let
       goTyVar (TypeVarKinded (Wrapped _ (Labeled a _ _) _)) = nameValue a
@@ -504,7 +502,7 @@ convertDeclaration fileName decl = case decl of
       (convertConstraint fileName <$> maybe [] (toList . fst) ctrs)
       (qualified cls)
       (convertType fileName <$> args)
-      (convertDerivingStrategy strategy)
+      (AST.DerivedInstance $ convertDerivingStrategy <$> strategy)
   DeclKindSignature _ kw (Labeled name _ ty) -> do
     let
       kindFor = case tokValue kw of
@@ -556,32 +554,20 @@ convertDeclaration fileName decl = case decl of
       let ann' = uncurry (sourceAnnCommented fileName) $ instanceBindingRange binding
       convertValueBindingFields fileName ann' fields
 
-convertDerivingStrategy :: Maybe DerivingStrategy -> AST.TypeInstanceBody
-convertDerivingStrategy = \case
-  Just (DeriveNewtype _) -> AST.NewtypeInstance
-  Nothing -> AST.DerivedInstance
+convertDerivingStrategy :: DerivingStrategy -> AST.DerivingStrategy
+convertDerivingStrategy (DeriveNewtype _) = AST.DeriveNewtype
 
-convertDerivedTypeInstances :: String -> DataHead a -> DerivedTypeInstances a -> [AST.Declaration]
-convertDerivedTypeInstances fileName hd (DerivedTypeInstances _ _ strategy constraints) =
-  foldMap (pure . convertDerivedTypeInstanceConstraint fileName hd (convertDerivingStrategy strategy)) constraints
+convertDerivedTypeInstances :: String -> DerivedTypeInstances a -> [AST.Declaration]
+convertDerivedTypeInstances fileName (DerivedTypeInstances _ _ strategy constraints) =
+  AST.DataDerivedTypeInstancesDeclaration Pos.nullSourceAnn (convertDerivingStrategy <$> strategy) $
+    foldMap (pure . convertDerivedTypeInstanceConstraint fileName) constraints
 
-convertDerivedTypeInstanceConstraint :: String -> DataHead a -> AST.TypeInstanceBody -> Constraint a -> AST.Declaration
-convertDerivedTypeInstanceConstraint fileName hd body = \case
+convertDerivedTypeInstanceConstraint :: String -> Constraint a -> AST.Declaration
+convertDerivedTypeInstanceConstraint fileName = \case
   Constraint _ className args ->
-    AST.TypeInstanceDeclaration Pos.nullSourceAnn [AST.AnonymousTypeInstance] 0 AST.AnonymousTypeInstance
-      []
-      (qualified className)
-      ((convertType fileName <$> args) <>
-        [convertDerivedTypeInstanceDataHead fileName hd])
-      body
+    AST.DataDerivedTypeInstance Pos.nullSourceAnn AST.AnonymousTypeInstance (qualified className) (convertType fileName <$> args)
   ConstraintParens _ (Wrapped _ constraint _) ->
-    convertDerivedTypeInstanceConstraint fileName hd body constraint
-
-convertDerivedTypeInstanceDataHead :: String -> DataHead a -> T.SourceType
-convertDerivedTypeInstanceDataHead fileName (DataHead _ (Name token tyName) vars) =
-  foldl' (\a b -> T.TypeApp (Pos.widenSourceAnn (T.getAnnForType a) (T.getAnnForType b)) a b)
-    (convertTypeConstructor fileName (QualifiedName token Nothing tyName))
-    $ convertTypeVarBinding fileName <$> vars
+    convertDerivedTypeInstanceConstraint fileName constraint
 
 convertSignature :: String -> Labeled (Name Ident) (Type a) -> AST.Declaration
 convertSignature fileName (Labeled a _ b) = do

@@ -36,21 +36,32 @@ desugarAnonymousTypeInstancesModule :: Module -> Module
 desugarAnonymousTypeInstancesModule (Module ss comments moduleName decls exports) =
   let (desugared, DesugarState{..}) = traverse desugarAnonymousTypeInstance decls `runState` DesugarState mempty
       duplicateInstancesNames = Map.keysSet $ Map.filter (>1) desugaredTypeInstances
-      renamed = renameInstanceChains desugared `evalState` RenameState duplicateInstancesNames mempty
+      renamed = renameImplicitTypeInstance desugared `evalState` RenameState duplicateInstancesNames mempty
   in Module ss comments moduleName renamed exports
   where
   desugarAnonymousTypeInstance (TypeInstanceDeclaration sa chain idx AnonymousTypeInstance constraints className tys body) = do
     name <- implicitTypeInstanceName className tys
     pure $ TypeInstanceDeclaration sa chain idx name constraints className tys body
+  desugarAnonymousTypeInstance (DataDeclaration sa dtype name args dctors insts) =
+    DataDeclaration sa dtype name args dctors <$> traverse desugarDerivedTypeInstances insts
   desugarAnonymousTypeInstance decl = pure decl
 
-  renameInstanceChains (instanceChainHead@TypeInstanceDeclaration{} : decls') = do
+  desugarDerivedTypeInstances (DataDerivedTypeInstancesDeclaration sa strategy instances) =
+    DataDerivedTypeInstancesDeclaration sa strategy <$> traverse desugarDerivedTypeInstance instances
+
+  desugarDerivedTypeInstance (DataDerivedTypeInstance sa AnonymousTypeInstance className tys) = do
+    name <- implicitTypeInstanceName className tys
+    pure $ DataDerivedTypeInstance sa name className tys
+  desugarDerivedTypeInstance inst = pure inst
+
+  ƒ (instanceChainHead@TypeInstanceDeclaration{} : decls') = do
     let (instanceChainTail, rest) = span isChainedTypeInstance decls'
     renamedInstanceChain <- renameInstanceChain $ instanceChainHead : instanceChainTail
-    rest' <- renameInstanceChains rest
+    rest' <- ƒ rest
     pure $ relinkInstanceChain renamedInstanceChain <> rest'
-  renameInstanceChains (decl : decls') = (decl:) <$> renameInstanceChains decls'
-  renameInstanceChains [] = pure $ []
+  ƒ (decl : decls') =
+    (:) <$> renameDataDeclaration decl <*> ƒ decls'
+  ƒ [] = pure $ []
 
   isChainedTypeInstance (TypeInstanceDeclaration _ _ idx _ _ _ _ _) = idx > 0
   isChainedTypeInstance _ = False
@@ -62,14 +73,29 @@ desugarAnonymousTypeInstancesModule (Module ss comments moduleName decls exports
       else pure instances
 
   renameTypeInstance (decl@(TypeInstanceDeclaration sa chain idx (ImplicitTypeInstanceName (Escaped name)) constraints className tys body)) = do
+    name' <- rename name
+    pure $ TypeInstanceDeclaration sa chain idx (ImplicitTypeInstanceName $ Escaped name') constraints className tys body
+  renameTypeInstance decl = pure decl
+
+  renameDataDeclaration (DataDeclaration sa dtype name args dctors insts) =
+    DataDeclaration sa dtype name args dctors <$> traverse renameDerivedTypeInstances insts
+  renameDataDeclaration decl = pure decl
+
+  renameDerivedTypeInstances (DataDerivedTypeInstancesDeclaration sa strategy instances) =
+    DataDerivedTypeInstancesDeclaration sa strategy <$> traverse renameDerivedTypeInstance instances
+
+  renameDerivedTypeInstance (DataDerivedTypeInstance sa (ImplicitTypeInstanceName (Escaped name)) className tys) = do
+    name' <- rename name
+    pure $ DataDerivedTypeInstance sa (ImplicitTypeInstanceName (Escaped name')) className tys
+  renameDerivedTypeInstance inst = pure inst
+
+  rename name = do
     duplicate <- gets ((name `elem`) . duplicateInstancesNames)
     if duplicate then do
       n <- gets $ fromMaybe 0 . Map.lookup name . renamedTypeInstances
       modify (\st -> st { renamedTypeInstances = Map.insert name (n + 1) $ renamedTypeInstances st })
-      let name' = name <> "_" <> Text.pack (show n)
-      pure $ TypeInstanceDeclaration sa chain idx (ImplicitTypeInstanceName $ Escaped name') constraints className tys body
-    else pure decl
-  renameTypeInstance decl = pure decl
+      pure $ name <> "_" <> Text.pack (show n)
+    else pure name
 
   relinkInstanceChain instances =
     relinkTypeInstance (mapMaybe getTypeInstanceDeclarationName instances) <$> instances

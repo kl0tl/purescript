@@ -110,7 +110,7 @@ desugarDecl
   -> m (Maybe DeclarationRef, [Declaration])
 desugarDecl mn exps = go
   where
-  go (TypeInstanceDeclaration _ _ _ _ _ _ _ DerivedInstance) = internalError "Derived instance should have been desugared"
+  go (TypeInstanceDeclaration _ _ _ _ _ _ _ DerivedInstance{}) = internalError "Derived instance should have been desugared"
   go (TypeInstanceDeclaration _ _ _ AnonymousTypeInstance _ _ _ _) = internalError "Anonymous instance should have been desugared"
   go d@(TypeInstanceDeclaration sa _ _ (getTypeInstanceName -> Just name) deps className tys (ExplicitInstance members)) = do
     desugared <- desugarCases members
