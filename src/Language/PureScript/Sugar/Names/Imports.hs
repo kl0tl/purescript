@@ -9,9 +9,10 @@ import Prelude.Compat
 
 import Control.Monad
 import Control.Monad.Error.Class (MonadError(..))
+import Control.Monad.Writer.Class (MonadWriter(..), censor)
 
 import Data.Foldable (for_, traverse_)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import qualified Data.Map as M
 import qualified Data.Set as S
 
@@ -42,10 +43,12 @@ findImports = foldr go M.empty
 resolveImports
   :: forall m
    . MonadError MultipleErrors m
+  => MonadWriter MultipleErrors m
   => Env
   -> Module
   -> m (Module, Imports)
 resolveImports env (Module ss coms currentModule decls exps) =
+  censor (addHint (ErrorInModule currentModule)) $
   rethrow (addHint (ErrorInModule currentModule)) $ do
     let imports = findImports decls
         imports' = M.map (map (\(ss', dt, mmn) -> (ss', Just dt, mmn))) imports
@@ -57,6 +60,7 @@ resolveImports env (Module ss coms currentModule decls exps) =
 resolveModuleImport
   :: forall m
    . MonadError MultipleErrors m
+  => MonadWriter MultipleErrors m
   => Env
   -> Imports
   -> (ModuleName, [(SourceSpan, Maybe ImportDeclarationType, Maybe ModuleName)])
@@ -85,6 +89,7 @@ resolveModuleImport env ie (mn, imps) = foldM go ie imps
 resolveImport
   :: forall m
    . MonadError MultipleErrors m
+  => MonadWriter MultipleErrors m
   => ModuleName
   -> Exports
   -> Imports
@@ -187,6 +192,7 @@ resolveImport importModule exps imps impQual = resolveByType
     let (dctorNames, src) = allExportedDataConstructors name
         dctorLookup :: M.Map (ProperName 'ConstructorName) ExportSource
         dctorLookup = M.fromList $ map (, src) dctorNames
+    when (null dctorNames && isNothing dctors) . tell . errorMessage' ss $ MisleadingEmptyTypeImport importModule name
     traverse_ (traverse_ $ checkDctorExists ss name dctorNames) dctors
     let dctors' = foldl (\m d -> updateImports m dctorLookup id d ss prov) (importedDataConstructors imp) (fromMaybe dctorNames dctors)
     return $ imp { importedTypes = types', importedDataConstructors = dctors' }
