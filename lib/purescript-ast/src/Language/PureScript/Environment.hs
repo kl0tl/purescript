@@ -259,7 +259,7 @@ primKind :: Text -> SourceType
 primKind = primTy
 
 primSubKind :: Text -> Text -> SourceType
-primSubKind sub = TypeConstructor nullSourceAnn . primSubName sub
+primSubKind sub = TypeConstructor nullSourceAnn . resolveWithQualified . primSubName sub
 
 -- | Kind of ground types
 kindType :: SourceType
@@ -269,7 +269,7 @@ kindConstraint :: SourceType
 kindConstraint = primKind C.constraint
 
 isKindType :: Type a -> Bool
-isKindType (TypeConstructor _ n) = n == primName C.typ
+isKindType (TypeConstructor _ n) = qualifyWithResolved n == C.Type
 isKindType _ = False
 
 kindSymbol :: SourceType
@@ -295,7 +295,7 @@ kindOfREmpty = tyForall "k" kindType (kindRow (tyVar "k"))
 
 -- | Construct a type in the Prim module
 primTy :: Text -> SourceType
-primTy = TypeConstructor nullSourceAnn . primName
+primTy = TypeConstructor nullSourceAnn . resolveWithQualified . primName
 
 -- | Type constructor for functions
 tyFunction :: SourceType

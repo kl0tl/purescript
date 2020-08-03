@@ -319,7 +319,7 @@ moduleToJs (Module _ coms mn _ imps exps reExps foreigns decls) foreign_ =
   -- | Generate code in the simplified JavaScript intermediate representation for a reference to a
   -- variable.
   varToJs :: Qualified Ident -> AST
-  varToJs (Qualified Nothing ident) = var ident
+  varToJs (Unqualified ident) = var ident
   varToJs qual = qualifiedToJS id qual
 
   -- | Generate code in the simplified JavaScript intermediate representation for a reference to a

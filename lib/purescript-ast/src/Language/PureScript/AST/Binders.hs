@@ -30,12 +30,12 @@ data Binder
   -- |
   -- A binder which matches a data constructor
   --
-  | ConstructorBinder SourceSpan (Qualified (ProperName 'ConstructorName)) [Binder]
+  | ConstructorBinder SourceSpan (Resolved (ProperName 'ConstructorName)) [Binder]
   -- |
   -- A operator alias binder. During the rebracketing phase of desugaring,
   -- this data constructor will be removed.
   --
-  | OpBinder SourceSpan (Qualified (OpName 'ValueOpName))
+  | OpBinder SourceSpan (Resolved (OpName 'ValueOpName))
   -- |
   -- Binary operator application. During the rebracketing phase of desugaring,
   -- this data constructor will be removed.

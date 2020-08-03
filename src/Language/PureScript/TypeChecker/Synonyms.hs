@@ -40,15 +40,17 @@ replaceAllTypeSynonyms' syns kinds = everywhereOnTypesTopDownM try
 
   go :: Int -> [SourceType] -> [SourceType] -> SourceType -> Either MultipleErrors (Maybe SourceType)
   go c kargs args (TypeConstructor _ ctor)
-    | Just (synArgs, body) <- M.lookup ctor syns
+    | ctor' <- qualifyWithResolved ctor
+    , Just (synArgs, body) <- M.lookup ctor' syns
     , c == length synArgs
-    , kindArgs <- lookupKindArgs ctor
+    , kindArgs <- lookupKindArgs ctor'
     , length kargs == length kindArgs
     = let repl = replaceAllTypeVars (zip (map fst synArgs) args <> zip kindArgs kargs) body
       in Just <$> try repl
-    | Just (synArgs, _) <- M.lookup ctor syns
+    | ctor' <- qualifyWithResolved ctor
+    , Just (synArgs, _) <- M.lookup ctor' syns
     , length synArgs > c
-    = throwError . errorMessage $ PartiallyAppliedSynonym ctor
+    = throwError . errorMessage $ PartiallyAppliedSynonym ctor'
   go c kargs args (TypeApp _ f arg) = go (c + 1) kargs (arg : args) f
   go c kargs args (KindApp _ f arg) = go c (arg : kargs) args f
   go _ _ _ _ = return Nothing

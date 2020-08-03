@@ -211,7 +211,7 @@ inferDataDeclarationRoles moduleName (tyName, tyArgs, ctors) roleEnv =
           --   our parameters is unimportant.
           TypeConstructor _ t1Name ->
             let
-              t1Roles = fromMaybe (repeat Phantom) $ M.lookup t1Name roleEnv
+              t1Roles = fromMaybe (repeat Phantom) $ M.lookup (qualifyWithResolved t1Name) roleEnv
               k role ti = case role of
                 Nominal ->
                   freeNominals ti

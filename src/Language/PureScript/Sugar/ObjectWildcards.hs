@@ -36,11 +36,11 @@ desugarDecl d = rethrowWithPosition (declSourceSpan d) $ fn d
     | b' <- stripPositionInfo b
     , BinaryNoParens op val u <- b'
     , isAnonymousArgument u = do arg <- freshIdent'
-                                 return $ Abs (VarBinder nullSourceSpan arg) $ App (App op val) (Var nullSourceSpan (Qualified Nothing arg))
+                                 return $ Abs (VarBinder nullSourceSpan arg) $ App (App op val) (Var nullSourceSpan (mkUnresolved arg))
     | b' <- stripPositionInfo b
     , BinaryNoParens op u val <- b'
     , isAnonymousArgument u = do arg <- freshIdent'
-                                 return $ Abs (VarBinder nullSourceSpan arg) $ App (App op (Var nullSourceSpan (Qualified Nothing arg))) val
+                                 return $ Abs (VarBinder nullSourceSpan arg) $ App (App op (Var nullSourceSpan (mkUnresolved arg))) val
   desugarExpr (Literal ss (ObjectLiteral ps)) = wrapLambdaAssoc (Literal ss . ObjectLiteral) ps
   desugarExpr (ObjectUpdateNested obj ps) = transformNestedUpdate obj ps
   desugarExpr (Accessor prop u)
@@ -117,4 +117,4 @@ desugarDecl d = rethrowWithPosition (declSourceSpan d) $ fn d
     | otherwise = return Nothing
 
   argToExpr :: Ident -> Expr
-  argToExpr = Var nullSourceSpan . Qualified Nothing
+  argToExpr = Var nullSourceSpan . mkUnresolved

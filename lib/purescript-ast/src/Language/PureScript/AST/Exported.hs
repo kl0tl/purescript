@@ -79,15 +79,19 @@ filterInstances mn (Just exps) =
   --    that module; the code would fail to compile otherwise).
   visibleOutside
     :: [Either (ProperName 'ClassName) (ProperName 'TypeName)]
-    -> Either (Qualified (ProperName 'ClassName)) (Qualified (ProperName 'TypeName))
+    -> Either (Resolved (ProperName 'ClassName)) (Resolved (ProperName 'TypeName))
     -> Bool
   visibleOutside refs q
-    | either checkQual checkQual q = True
-    | otherwise = either (Left . disqualify) (Right . disqualify) q `elem` refs
+    | either checkResolved checkResolved q = True
+    | otherwise = either (Left . unresolve) (Right . unresolve) q `elem` refs
+
+  -- Check that a resolved name refers to a different module
+  checkResolved :: Resolved a -> Bool
+  checkResolved = checkQualified . qualifyWithResolved
 
   -- Check that a qualified name is qualified for a different module
-  checkQual :: Qualified a -> Bool
-  checkQual q = isQualified q && not (isQualifiedWith mn q)
+  checkQualified :: Qualified a -> Bool
+  checkQualified q = isQualified q && not (isQualifiedWith mn q)
 
   typeName :: DeclarationRef -> Maybe (ProperName 'TypeName)
   typeName (TypeRef _ n _) = Just n
@@ -100,7 +104,7 @@ filterInstances mn (Just exps) =
 -- |
 -- Get all type and type class names referenced by a type instance declaration.
 --
-typeInstanceConstituents :: Declaration -> [Either (Qualified (ProperName 'ClassName)) (Qualified (ProperName 'TypeName))]
+typeInstanceConstituents :: Declaration -> [Either (Resolved (ProperName 'ClassName)) (Resolved (ProperName 'TypeName))]
 typeInstanceConstituents (TypeInstanceDeclaration _ _ _ _ constraints className tys _) =
   Left className : (concatMap fromConstraint constraints ++ concatMap fromType tys)
   where

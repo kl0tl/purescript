@@ -710,33 +710,33 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       line $ "The kind declaration for " <> markCode (runProperName nm) <> " should be followed by its definition."
     renderSimpleErrorMessage (RedefinedIdent name) =
       line $ "The value " <> markCode (showIdent name) <> " has been defined multiple times"
-    renderSimpleErrorMessage (UnknownName name@(Qualified Nothing (IdentName (Ident i)))) | i `elem` [ C.bind, C.discard ] =
+    renderSimpleErrorMessage (UnknownName name@(Unqualified (IdentName (Ident i)))) | i `elem` [ C.bind, C.discard ] =
       line $ "Unknown " <> printName name <> ". You're probably using do-notation, which the compiler replaces with calls to the " <> markCode i <> " function. Please import " <> markCode i <> " from module " <> markCode "Prelude"
     renderSimpleErrorMessage (UnknownName name) =
       line $ "Unknown " <> printName name
     renderSimpleErrorMessage (UnknownImport mn name) =
-      paras [ line $ "Cannot import " <> printName (Qualified Nothing name) <> " from module " <> markCode (runModuleName mn)
+      paras [ line $ "Cannot import " <> printName (Unqualified name) <> " from module " <> markCode (runModuleName mn)
             , line "It either does not exist or the module does not export it."
             ]
     renderSimpleErrorMessage (UnknownImportDataConstructor mn tcon dcon) =
       line $ "Module " <> runModuleName mn <> " does not export data constructor " <> markCode (runProperName dcon) <> " for type " <> markCode (runProperName tcon)
     renderSimpleErrorMessage (UnknownExport name) =
-      line $ "Cannot export unknown " <> printName (Qualified Nothing name)
+      line $ "Cannot export unknown " <> printName (Unqualified name)
     renderSimpleErrorMessage (UnknownExportDataConstructor tcon dcon) =
       line $ "Cannot export data constructor " <> markCode (runProperName dcon) <> " for type " <> markCode (runProperName tcon) <> ", as it has not been declared."
     renderSimpleErrorMessage (ScopeConflict nm ms) =
-      paras [ line $ "Conflicting definitions are in scope for " <> printName (Qualified Nothing nm) <> " from the following modules:"
+      paras [ line $ "Conflicting definitions are in scope for " <> printName (Unqualified nm) <> " from the following modules:"
             , indent $ paras $ map (line . markCode . runModuleName) ms
             ]
     renderSimpleErrorMessage (ScopeShadowing nm exmn ms) =
-      paras [ line $ "Shadowed definitions are in scope for " <> printName (Qualified Nothing nm) <> " from the following open imports:"
+      paras [ line $ "Shadowed definitions are in scope for " <> printName (Unqualified nm) <> " from the following open imports:"
             , indent $ paras $ map (line . markCode . ("import " <>) . runModuleName) ms
             , line $ "These will be ignored and the " <> case exmn of
                 Just exmn' -> "declaration from " <> markCode (runModuleName exmn') <> " will be used."
                 Nothing -> "local declaration will be used."
             ]
     renderSimpleErrorMessage (DeclConflict new existing) =
-      line $ "Declaration for " <> printName (Qualified Nothing new) <> " conflicts with an existing " <> nameType existing <> " of the same name."
+      line $ "Declaration for " <> printName (Unqualified new) <> " conflicts with an existing " <> nameType existing <> " of the same name."
     renderSimpleErrorMessage (ExportConflict new existing) =
       line $ "Export for " <> printName new <> " conflicts with " <> printName existing
     renderSimpleErrorMessage (DuplicateModule mn) =
@@ -834,14 +834,16 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
             , markCodeBox $ indent $ line (showQualified runProperName nm)
             , line "because the class was not in scope. Perhaps it was not exported."
             ]
-    renderSimpleErrorMessage (NoInstanceFound (Constraint _ C.Fail _ [ ty ] _)) | Just box <- toTypelevelString ty =
+    renderSimpleErrorMessage (NoInstanceFound (Constraint _ cls _ [ ty ] _)) | Just box <- toTypelevelString ty
+                                                                             , C.Fail <- qualifyWithResolved cls =
       paras [ line "A custom type error occurred while solving type class constraints:"
             , indent box
             ]
-    renderSimpleErrorMessage (NoInstanceFound (Constraint _ C.Partial
+    renderSimpleErrorMessage (NoInstanceFound (Constraint _ cls
                                                           _
                                                           _
-                                                          (Just (PartialConstraintData bs b)))) =
+                                                          (Just (PartialConstraintData bs b))))
+                                                          | C.Partial <- qualifyWithResolved cls =
       paras [ line "A case expression could not be determined to cover all inputs."
             , line "The following additional cases are required to cover all inputs:"
             , indent $ paras $
@@ -850,16 +852,16 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
                   : [line "..." | not b]
             , line "Alternatively, add a Partial constraint to the type of the enclosing value."
             ]
-    renderSimpleErrorMessage (NoInstanceFound (Constraint _ C.Discard _ [ty] _)) =
+    renderSimpleErrorMessage (NoInstanceFound (Constraint _ cls _ [ty] _)) | C.Discard <- qualifyWithResolved cls =
       paras [ line "A result of type"
             , markCodeBox $ indent $ prettyType ty
             , line "was implicitly discarded in a do notation block."
             , line ("You can use " <> markCode "_ <- ..." <> " to explicitly discard the result.")
             ]
-    renderSimpleErrorMessage (NoInstanceFound (Constraint _ nm _ ts _)) =
+    renderSimpleErrorMessage (NoInstanceFound (Constraint _ cls _ ts _)) =
       paras [ line "No type class instance was found for"
             , markCodeBox $ indent $ Box.hsep 1 Box.left
-                [ line (showQualified runProperName nm)
+                [ line (showQualified runProperName $ qualifyWithResolved cls)
                 , Box.vcat Box.left (map (typeAtomAsBox prettyDepth) ts)
                 ]
             , paras [ line "The instance head contains unknown type variables. Consider adding a type annotation."
@@ -1107,7 +1109,7 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
 
     renderSimpleErrorMessage msg@(UnusedExplicitImport mn names _ _) =
       paras [ line $ "The import of module " <> markCode (runModuleName mn) <> " contains the following unused references:"
-            , indent $ paras $ map (line . markCode . runName . Qualified Nothing) names
+            , indent $ paras $ map (line . markCode . runName . Unqualified) names
             , line "It could be replaced with:"
             , indent $ line $ markCode $ showSuggestion msg ]
 
@@ -1131,10 +1133,10 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       line $ "Duplicate import of " <> markCode (prettyPrintImport name imp qual)
 
     renderSimpleErrorMessage (DuplicateImportRef name) =
-      line $ "Import list contains multiple references to " <> printName (Qualified Nothing name)
+      line $ "Import list contains multiple references to " <> printName (Unqualified name)
 
     renderSimpleErrorMessage (DuplicateExportRef name) =
-      line $ "Export list contains multiple references to " <> printName (Qualified Nothing name)
+      line $ "Export list contains multiple references to " <> printName (Unqualified name)
 
     renderSimpleErrorMessage (IntOutOfRange value backend lo hi) =
       paras [ line $ "Integer value " <> markCode (T.pack (show value)) <> " is out of range for the " <> backend <> " backend."
@@ -1436,11 +1438,11 @@ prettyPrintSingleError (PPEOptions codeColor full level showDocs relPath) e = fl
       paras [ detail
             , line $ "in foreign import " <> markCode (showIdent nm)
             ]
-    renderHint (ErrorSolvingConstraint (Constraint _ nm _ ts _)) detail =
+    renderHint (ErrorSolvingConstraint (Constraint _ cls _ ts _)) detail =
       paras [ detail
             , line "while solving type class constraint"
             , markCodeBox $ indent $ Box.hsep 1 Box.left
-                [ line (showQualified runProperName nm)
+                [ line (showQualified runProperName $ qualifyWithResolved cls)
                 , Box.vcat Box.left (map (typeAtomAsBox prettyDepth) ts)
                 ]
             ]
@@ -1739,16 +1741,16 @@ toTypelevelString :: Type a -> Maybe Box.Box
 toTypelevelString (TypeLevelString _ s) =
   Just . Box.text $ decodeStringWithReplacement s
 toTypelevelString (TypeApp _ (TypeConstructor _ f) x)
-  | f == primSubName C.typeError "Text" = toTypelevelString x
+  | qualifyWithResolved f == primSubName C.typeError "Text" = toTypelevelString x
 toTypelevelString (TypeApp _ (TypeConstructor _ f) x)
-  | f == primSubName C.typeError "Quote" = Just (typeAsBox maxBound x)
+  | qualifyWithResolved f == primSubName C.typeError "Quote" = Just (typeAsBox maxBound x)
 toTypelevelString (TypeApp _ (TypeConstructor _ f) (TypeLevelString _ x))
-  | f == primSubName C.typeError "QuoteLabel" = Just . line . prettyPrintLabel . Label $ x
+  | qualifyWithResolved f == primSubName C.typeError "QuoteLabel" = Just . line . prettyPrintLabel . Label $ x
 toTypelevelString (TypeApp _ (TypeApp _ (TypeConstructor _ f) x) ret)
-  | f == primSubName C.typeError "Beside" =
+  | qualifyWithResolved f == primSubName C.typeError "Beside" =
     (Box.<>) <$> toTypelevelString x <*> toTypelevelString ret
 toTypelevelString (TypeApp _ (TypeApp _ (TypeConstructor _ f) x) ret)
-  | f == primSubName C.typeError "Above" =
+  | qualifyWithResolved f == primSubName C.typeError "Above" =
     (Box.//) <$> toTypelevelString x <*> toTypelevelString ret
 toTypelevelString _ = Nothing
 

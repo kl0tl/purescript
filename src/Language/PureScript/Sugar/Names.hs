@@ -243,15 +243,15 @@ renameInModule imports (Module modSS coms mn decls exps) =
       TypeFixityDeclaration sa fixity
         <$> updateTypeName alias ss
         <*> pure op
-  updateDecl bound (ValueFixityDeclaration sa@(ss, _) fixity (Qualified mn' (Left alias)) op) =
+  updateDecl bound (ValueFixityDeclaration sa@(ss, _) fixity (Unresolved (Qualified mn' (Left alias))) op) =
     fmap (bound,) $
       ValueFixityDeclaration sa fixity . fmap Left
-        <$> updateValueName (Qualified mn' alias) ss
+        <$> updateValueName (Unresolved (Qualified mn' alias)) ss
         <*> pure op
-  updateDecl bound (ValueFixityDeclaration sa@(ss, _) fixity (Qualified mn' (Right alias)) op) =
+  updateDecl bound (ValueFixityDeclaration sa@(ss, _) fixity (Unresolved (Qualified mn' (Right alias))) op) =
     fmap (bound,) $
       ValueFixityDeclaration sa fixity . fmap Right
-        <$> updateDataConstructorName (Qualified mn' alias) ss
+        <$> updateDataConstructorName (Unresolved (Qualified mn' alias)) ss
         <*> pure op
   updateDecl b d =
     return (b, d)
@@ -269,14 +269,14 @@ renameInModule imports (Module modSS coms mn decls exps) =
     unless (length (ordNub args) == length args) .
       throwError . errorMessage' pos $ OverlappingNamesInLet
     return ((pos, args ++ bound), Let w ds val')
-  updateValue (_, bound) (Var ss name'@(Qualified Nothing ident)) | ident `notElem` bound =
+  updateValue (_, bound) (Var ss name'@(Unresolved (Qualified Nothing ident))) | ident `notElem` bound =
     (,) (ss, bound) <$> (Var ss <$> updateValueName name' ss)
-  updateValue (_, bound) (Var ss name'@(Qualified (Just _) _)) =
+  updateValue (_, bound) (Var ss name'@(Unresolved (Qualified (Just _) _))) =
     (,) (ss, bound) <$> (Var ss <$> updateValueName name' ss)
-  updateValue (_, bound) (Op ss op) =
-    (,) (ss, bound) <$> (Op ss <$> updateValueOpName op ss)
-  updateValue (_, bound) (Constructor ss name) =
-    (,) (ss, bound) <$> (Constructor ss <$> updateDataConstructorName name ss)
+  updateValue (_, bound) (Op ss (Unresolved op)) =
+    (,) (ss, bound) <$> (Op ss <$> updateValueOpName (Unresolved op) ss)
+  updateValue (_, bound) (Constructor ss (Unresolved name)) =
+    (,) (ss, bound) <$> (Constructor ss <$> updateDataConstructorName (Unresolved name) ss)
   updateValue s (TypedValue check val ty) =
     (,) s <$> (TypedValue check val <$> updateTypesEverywhere ty)
   updateValue s v = return (s, v)
@@ -287,10 +287,10 @@ renameInModule imports (Module modSS coms mn decls exps) =
     -> m ((SourceSpan, [Ident]), Binder)
   updateBinder (_, bound) v@(PositionedBinder pos _ _) =
     return ((pos, bound), v)
-  updateBinder (_, bound) (ConstructorBinder ss name b) =
-    (,) (ss, bound) <$> (ConstructorBinder ss <$> updateDataConstructorName name ss <*> pure b)
-  updateBinder (_, bound) (OpBinder ss op) =
-    (,) (ss, bound) <$> (OpBinder ss <$> updateValueOpName op ss)
+  updateBinder (_, bound) (ConstructorBinder ss (Unresolved name) b) =
+    (,) (ss, bound) <$> (ConstructorBinder ss <$> updateDataConstructorName (Unresolved name) ss <*> pure b)
+  updateBinder (_, bound) (OpBinder ss (Unresolved op)) =
+    (,) (ss, bound) <$> (OpBinder ss <$> updateValueOpName (Unresolved op) ss)
   updateBinder s (TypedBinder t b) = do
     t' <- updateTypesEverywhere t
     return (s, TypedBinder t' b)
@@ -341,49 +341,50 @@ renameInModule imports (Module modSS coms mn decls exps) =
       <*> pure info
 
   updateTypeName
-    :: Qualified (ProperName 'TypeName)
+    :: Resolved (ProperName 'TypeName)
     -> SourceSpan
-    -> m (Qualified (ProperName 'TypeName))
+    -> m (Resolved (ProperName 'TypeName))
   updateTypeName = update (importedTypes imports) TyName
 
   updateTypeOpName
-    :: Qualified (OpName 'TypeOpName)
+    :: Resolved (OpName 'TypeOpName)
     -> SourceSpan
-    -> m (Qualified (OpName 'TypeOpName))
+    -> m (Resolved (OpName 'TypeOpName))
   updateTypeOpName = update (importedTypeOps imports) TyOpName
 
   updateDataConstructorName
-    :: Qualified (ProperName 'ConstructorName)
+    :: Resolved (ProperName 'ConstructorName)
     -> SourceSpan
-    -> m (Qualified (ProperName 'ConstructorName))
+    -> m (Resolved (ProperName 'ConstructorName))
   updateDataConstructorName = update (importedDataConstructors imports) DctorName
 
   updateClassName
-    :: Qualified (ProperName 'ClassName)
+    :: Resolved (ProperName 'ClassName)
     -> SourceSpan
-    -> m (Qualified (ProperName 'ClassName))
+    -> m (Resolved (ProperName 'ClassName))
   updateClassName = update (importedTypeClasses imports) TyClassName
 
-  updateValueName :: Qualified Ident -> SourceSpan -> m (Qualified Ident)
+  updateValueName :: Resolved Ident -> SourceSpan -> m (Resolved Ident)
   updateValueName = update (importedValues imports) IdentName
 
   updateValueOpName
-    :: Qualified (OpName 'ValueOpName)
+    :: Resolved (OpName 'ValueOpName)
     -> SourceSpan
-    -> m (Qualified (OpName 'ValueOpName))
+    -> m (Resolved (OpName 'ValueOpName))
   updateValueOpName = update (importedValueOps imports) ValOpName
 
-  -- Update names so unqualified references become qualified, and locally
-  -- qualified references are replaced with their canonical qualified names
+  -- Update names so unresolved references become resolved, and locally
+  -- qualified references are annotated with their canonical qualified names
   -- (e.g. M.Map -> Data.Map.Map).
   update
     :: (Ord a)
     => M.Map (Qualified a) [ImportRecord a]
     -> (a -> Name)
-    -> Qualified a
+    -> Resolved a
     -> SourceSpan
-    -> m (Qualified a)
-  update imps toName qname@(Qualified mn' name) pos = warnAndRethrowWithPosition pos $
+    -> m (Resolved a)
+  update _ _ resolved@(Resolved (Just _) _) _ = pure resolved
+  update imps toName (Resolved Nothing qname@(Qualified mn' name)) pos = warnAndRethrowWithPosition pos $
     case (M.lookup qname imps, mn') of
 
       -- We found the name in our imports, so we return the name for it,
@@ -395,7 +396,7 @@ renameInModule imports (Module modSS coms mn decls exps) =
         (mnNew, mnOrig) <- checkImportConflicts pos mn toName options
         modify $ \usedImports ->
           M.insertWith (++) mnNew [fmap toName qname] usedImports
-        return $ Qualified (Just mnOrig) name
+        return $ Resolved (Just mnOrig) $ Qualified mn' name
 
       -- If the name wasn't found in our imports but was qualified then we need
       -- to check whether it's a failed import from a "pseudo" module (created
@@ -404,7 +405,7 @@ renameInModule imports (Module modSS coms mn decls exps) =
       (Nothing, Just mn'') ->
         if mn'' `S.member` importedQualModules imports || mn'' `S.member` importedModules imports
         then throwUnknown
-        else throwError . errorMessage . UnknownName . Qualified Nothing $ ModName mn''
+        else throwError . errorMessage . UnknownName . Unqualified $ ModName mn''
 
       -- If neither of the above cases are true then it's an undefined or
       -- unimported symbol.

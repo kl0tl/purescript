@@ -116,11 +116,11 @@ missingCasesSingle _ _ _ NullBinder = ([], return True)
 missingCasesSingle _ _ _ (VarBinder _ _) = ([], return True)
 missingCasesSingle env mn (VarBinder _ _) b = missingCasesSingle env mn NullBinder b
 missingCasesSingle env mn br (NamedBinder _ _ bl) = missingCasesSingle env mn br bl
-missingCasesSingle env mn NullBinder cb@(ConstructorBinder ss con _) =
+missingCasesSingle env mn NullBinder cb@(ConstructorBinder ss con@(Resolved resolvedmn (Qualified qualifiedmn _)) _) =
   (concatMap (\cp -> fst $ missingCasesSingle env mn cp cb) allPatterns, return True)
   where
-  allPatterns = map (\(p, t) -> ConstructorBinder ss (qualifyName p mn con) (initialize $ length t))
-                  $ getConstructors env mn con
+  allPatterns = map (\(p, t) -> ConstructorBinder ss (Resolved (resolvedmn <|> Just mn) (Qualified qualifiedmn p)) (initialize $ length t))
+                  $ getConstructors env mn (qualifyWithResolved con)
 missingCasesSingle env mn cb@(ConstructorBinder ss con bs) (ConstructorBinder _ con' bs')
   | con == con' = let (bs'', pr) = missingCasesMultiple env mn bs bs' in (map (ConstructorBinder ss con) bs'', pr)
   | otherwise = ([cb], return False)
@@ -290,7 +290,7 @@ checkExhaustive ss env mn numArgs cas expr = makeResult . first ordNub $ foldl' 
       Let
         FromLet
         [ partial var tyVar ]
-        $ App (Var ss (Qualified Nothing UnusedIdent)) e
+        $ App (Var ss (mkUnresolved UnusedIdent)) e
     where
       partial :: Text -> Text -> Declaration
       partial var tyVar =
@@ -298,7 +298,7 @@ checkExhaustive ss env mn numArgs cas expr = makeResult . first ordNub $ foldl' 
         [MkUnguarded
           (TypedValue
            True
-           (Abs (VarBinder ss (Ident var)) (Var ss (Qualified Nothing (Ident var))))
+           (Abs (VarBinder ss (Ident var)) (Var ss (mkUnresolved (Ident var))))
            (ty tyVar))
         ]
 
@@ -307,7 +307,7 @@ checkExhaustive ss env mn numArgs cas expr = makeResult . first ordNub $ foldl' 
         srcForAll tyVar
           Nothing
           ( srcConstrainedType
-              (srcConstraint C.Partial [] [] (Just constraintData))
+              (srcConstraint (resolveWithQualified C.Partial) [] [] (Just constraintData))
               $ srcTypeApp (srcTypeApp tyFunction (srcTypeVar tyVar)) (srcTypeVar tyVar)
           )
           Nothing

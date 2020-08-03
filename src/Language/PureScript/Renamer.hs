@@ -152,8 +152,8 @@ renameInValue (Abs ann name v) =
   newScope $ Abs ann <$> updateScope name <*> renameInValue v
 renameInValue (App ann v1 v2) =
   App ann <$> renameInValue v1 <*> renameInValue v2
-renameInValue (Var ann (Qualified Nothing name)) =
-  Var ann . Qualified Nothing <$> lookupIdent name
+renameInValue (Var ann (Unqualified name)) =
+  Var ann . Unqualified <$> lookupIdent name
 renameInValue v@Var{} = return v
 renameInValue (Case ann vs alts) =
   newScope $ Case ann <$> traverse renameInValue vs <*> traverse renameInCaseAlternative alts

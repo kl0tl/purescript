@@ -16,6 +16,7 @@ import qualified Data.Vector as V
 import GHC.Generics (Generic)
 import Data.Aeson
 import Data.Aeson.TH
+import Data.Function (on)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -185,6 +186,9 @@ data Qualified a = Qualified (Maybe ModuleName) a
 instance NFData a => NFData (Qualified a)
 instance Serialise a => Serialise (Qualified a)
 
+pattern Unqualified :: a -> Qualified a
+pattern Unqualified name = Qualified Nothing name
+
 showQualified :: (a -> Text) -> Qualified a -> Text
 showQualified f (Qualified Nothing a) = f a
 showQualified f (Qualified (Just name) a) = runModuleName name <> "." <> f a
@@ -237,6 +241,44 @@ isQualifiedWith :: ModuleName -> Qualified a -> Bool
 isQualifiedWith mn (Qualified (Just mn') _) = mn == mn'
 isQualifiedWith _ _ = False
 
+-- |
+-- A resolved name, i.e. a qualified name with an optional module name
+-- resolved by the compiler
+--
+data Resolved a = Resolved (Maybe ModuleName) (Qualified a)
+  deriving (Show, Functor, Foldable, Traversable, Generic)
+
+instance Eq a => Eq (Resolved a) where
+  (==) = (==) `on` qualifyWithResolved
+
+instance Ord a => Ord (Resolved a) where
+  compare = compare `on` qualifyWithResolved
+
+instance NFData a => NFData (Resolved a)
+instance Serialise a => Serialise (Resolved a)
+
+pattern Unresolved :: Qualified a -> Resolved a
+pattern Unresolved qualified = Resolved Nothing qualified
+
+mkResolved :: a -> ModuleName -> Resolved a
+mkResolved name mn = Resolved (Just mn) (Qualified (Just mn) name)
+
+mkUnresolved :: a -> Resolved a
+mkUnresolved = Unresolved . Unqualified
+
+getResolved :: Resolved a -> Maybe ModuleName
+getResolved (Resolved mn _) = mn
+
+unresolve :: Resolved a -> a
+unresolve (Resolved _ unresolved) = disqualify unresolved
+
+qualifyWithResolved :: Resolved a -> Qualified a
+qualifyWithResolved (Resolved mn (Qualified _ name)) = Qualified mn name
+
+resolveWithQualified :: Qualified a -> Resolved a
+resolveWithQualified (Qualified mn name) = Resolved mn (Qualified mn name)
+
+$(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''Resolved)
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''Qualified)
 $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''Ident)
 

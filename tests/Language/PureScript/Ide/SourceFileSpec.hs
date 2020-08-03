@@ -33,13 +33,13 @@ valueFixity =
   P.ValueFixityDeclaration
     ann1
     (P.Fixity P.Infix 0)
-    (P.Qualified Nothing (Left (P.Ident "")))
+    (P.mkUnresolved (Left (P.Ident "")))
     (P.OpName "<$>")
 typeFixity =
   P.TypeFixityDeclaration
     ann1
     (P.Fixity P.Infix 0)
-    (P.Qualified Nothing (P.ProperName ""))
+    (P.mkUnresolved (P.ProperName ""))
     (P.OpName "~>")
 foreign1 = P.ExternDeclaration ann1 (P.Ident "foreign1") P.srcREmpty
 foreign2 = P.ExternDataDeclaration ann1 (P.ProperName "Foreign2") P.kindType

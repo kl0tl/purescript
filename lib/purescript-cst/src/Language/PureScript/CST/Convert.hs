@@ -90,6 +90,9 @@ moduleName = \case
 qualified :: QualifiedName a -> N.Qualified a
 qualified q = N.Qualified (qualModule q) (qualName q)
 
+unresolved :: QualifiedName a -> N.Resolved a
+unresolved = N.Unresolved . qualified
+
 ident :: Ident -> N.Ident
 ident = N.Ident . getIdent
 
@@ -114,7 +117,7 @@ convertType fileName = go
     TypeVar _ a ->
       T.TypeVar (sourceName fileName a) . getIdent $ nameValue a
     TypeConstructor _ a ->
-      T.TypeConstructor (sourceQualName fileName a) $ qualified a
+      T.TypeConstructor (sourceQualName fileName a) $ unresolved a
     TypeWildcard _ a ->
       T.TypeWildcard (sourceAnnCommented fileName a a) Nothing
     TypeHole _ a ->
@@ -155,7 +158,7 @@ convertType fileName = go
         reassoc op b' a = do
           let
             a'  = go a
-            op' = T.TypeOp (sourceQualName fileName op) $ qualified op
+            op' = T.TypeOp (sourceQualName fileName op) $ unresolved op
             ann = Pos.widenSourceAnn (T.getAnnForType a') (T.getAnnForType b')
           T.BinaryNoParensType ann op' (go a) b'
         loop k = \case
@@ -164,7 +167,7 @@ convertType fileName = go
       loop go ty
     TypeOpName _ op -> do
       let rng = qualRange op
-      T.TypeOp (uncurry (sourceAnnCommented fileName) rng) (qualified op)
+      T.TypeOp (uncurry (sourceAnnCommented fileName) rng) $ unresolved op
     TypeArr _ a arr b -> do
       let
         a' = go a
@@ -195,7 +198,7 @@ convertConstraint fileName = go
   go = \case
     cst@(Constraint _ name args) -> do
       let ann = uncurry (sourceAnnCommented fileName) $ constraintRange cst
-      T.Constraint ann (qualified name) [] (convertType fileName <$> args) Nothing
+      T.Constraint ann (unresolved name) [] (convertType fileName <$> args) Nothing
     ConstraintParens _ (Wrapped _ c _) -> go c
 
 convertGuarded :: String -> Guarded a -> [AST.GuardedExpr]
@@ -252,10 +255,10 @@ convertExpr fileName = go
       positioned (sourceAnnCommented fileName a a) AST.AnonymousArgument
     ExprIdent _ a -> do
       let ann = sourceQualName fileName a
-      positioned ann . AST.Var (fst ann) . qualified $ fmap ident a
+      positioned ann . AST.Var (fst ann) . unresolved $ fmap ident a
     ExprConstructor _ a -> do
       let ann = sourceQualName fileName a
-      positioned ann . AST.Constructor (fst ann) $ qualified a
+      positioned ann . AST.Constructor (fst ann) $ unresolved a
     ExprBoolean _ a b -> do
       let ann = sourceAnnCommented fileName a a
       positioned ann . AST.Literal (fst ann) $ AST.BooleanLiteral b
@@ -300,7 +303,7 @@ convertExpr fileName = go
       let
         ann = uncurry (sourceAnn fileName) $ exprRange expr
         reassoc op b a = do
-          let op' = AST.Op (sourceSpan fileName . toSourceRange $ qualRange op) $ qualified op
+          let op' = AST.Op (sourceSpan fileName . toSourceRange $ qualRange op) $ unresolved op
           AST.BinaryNoParens op' (go a) b
         loop k = \case
           ExprOp _ a op b -> loop (reassoc op (k b)) a
@@ -309,7 +312,7 @@ convertExpr fileName = go
     ExprOpName _ op -> do
       let
         rng = qualRange op
-        op' = AST.Op (sourceSpan fileName $ toSourceRange rng) $ qualified op
+        op' = AST.Op (sourceSpan fileName $ toSourceRange rng) $ unresolved op
       positioned (uncurry (sourceAnnCommented fileName) rng) op'
     expr@(ExprNegate _ _ b) -> do
       let ann = uncurry (sourceAnnCommented fileName) $ exprRange expr
@@ -374,7 +377,7 @@ convertBinder fileName = go
       positioned ann . AST.NamedBinder (fst ann) (ident $ nameValue a) $ go b
     binder@(BinderConstructor _ a bs) -> do
       let ann = uncurry (sourceAnnCommented fileName) $ binderRange binder
-      positioned ann . AST.ConstructorBinder (fst ann) (qualified a) $ go <$> bs
+      positioned ann . AST.ConstructorBinder (fst ann) (unresolved a) $ go <$> bs
     BinderBoolean _ a b -> do
       let ann = sourceAnnCommented fileName a a
       positioned ann . AST.LiteralBinder (fst ann) $ AST.BooleanLiteral b
@@ -420,7 +423,7 @@ convertBinder fileName = go
       let
         ann = uncurry (sourceAnn fileName) $ binderRange binder
         reassoc op b a = do
-          let op' = AST.OpBinder (sourceSpan fileName . toSourceRange $ qualRange op) $ qualified op
+          let op' = AST.OpBinder (sourceSpan fileName . toSourceRange $ qualRange op) $ unresolved op
           AST.BinaryNoParensBinder op' (go a) b
         loop k = \case
           BinderOp _ a op b -> loop (reassoc op (k b)) a
@@ -475,7 +478,7 @@ convertDeclaration fileName decl = case decl of
         AST.TypeInstanceDeclaration ann' chainId ix
           (ident $ nameValue name)
           (convertConstraint fileName <$> maybe [] (toList . fst) ctrs)
-          (qualified cls)
+          (unresolved cls)
           (convertType fileName <$> args)
           (AST.ExplicitInstance $ goInstanceBinding <$> maybe [] (NE.toList . snd) bd)
     uncurry goInst <$> zip [0..] (toList insts)
@@ -487,7 +490,7 @@ convertDeclaration fileName decl = case decl of
         | otherwise = AST.DerivedInstance
     pure $ AST.TypeInstanceDeclaration ann [name'] 0 name'
       (convertConstraint fileName <$> maybe [] (toList . fst) ctrs)
-      (qualified cls)
+      (unresolved cls)
       (convertType fileName <$> args)
       instTy
   DeclKindSignature _ kw (Labeled name _ ty) -> do
@@ -512,9 +515,9 @@ convertDeclaration fileName decl = case decl of
       fixity = AST.Fixity assoc prec
     pure $ AST.FixityDeclaration ann $ case fxop of
       FixityValue name _ op -> do
-        Left $ AST.ValueFixity fixity (first ident <$> qualified name) (nameValue op)
+        Left $ AST.ValueFixity fixity (first ident <$> unresolved name) (nameValue op)
       FixityType _ name _ op ->
-        Right $ AST.TypeFixity fixity (qualified name) (nameValue op)
+        Right $ AST.TypeFixity fixity (unresolved name) (nameValue op)
   DeclForeign _ _ _ frn ->
     pure $ case frn of
       ForeignValue (Labeled a _ b) ->

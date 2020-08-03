@@ -85,7 +85,7 @@ splitTypeConstructor :: (MonadError IdeError m) =>
 splitTypeConstructor = go []
   where
     go acc (P.TypeApp _ ty arg) = go (arg : acc) ty
-    go acc (P.TypeConstructor _ tc) = pure (P.disqualify tc, acc)
+    go acc (P.TypeConstructor _ tc) = pure (P.unresolve tc, acc)
     go _ _ = throwError (GeneralError "Failed to read TypeConstructor")
 
 prettyCtor :: WildcardAnnotations -> Constructor -> Text

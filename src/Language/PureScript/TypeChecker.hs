@@ -164,7 +164,7 @@ addTypeClass _ qualifiedClassName args implies dependencies ds kind = do
     mkNewClass env = makeTypeClassData args classMembers implies dependencies ctIsEmpty
       where
       ctIsEmpty = null classMembers && all (typeClassIsEmpty . findSuperClass) implies
-      findSuperClass c = case M.lookup (constraintClass c) (typeClasses env) of
+      findSuperClass c = case M.lookup (qualifyWithResolved $ constraintClass c) (typeClasses env) of
         Just tcd -> tcd
         Nothing -> internalError "Unknown super class in TypeClassDeclaration"
 
@@ -228,7 +228,7 @@ checkTypeClassInstance cls i = check where
     TypeLevelString _ _ -> return ()
     TypeConstructor _ ctor -> do
       env <- getEnv
-      when (ctor `M.member` typeSynonyms env) . throwError . errorMessage $ TypeSynonymInstance
+      when (qualifyWithResolved ctor `M.member` typeSynonyms env) . throwError . errorMessage $ TypeSynonymInstance
       return ()
     TypeApp _ t1 t2 -> check t1 >> check t2
     KindApp _ t k -> check t >> check k
@@ -393,27 +393,28 @@ typeCheckAll moduleName _ = traverse go
       (args', implies', tys', kind) <- kindOfClass moduleName (sa, pn, args, implies, tys)
       addTypeClass moduleName qualifiedClassName (fmap Just <$> args') implies' deps tys' kind
       return d
-  go (d@(TypeInstanceDeclaration sa@(ss, _) ch idx dictName deps className tys body)) =
-    rethrow (addHint (ErrorInInstance className tys) . addHint (positionedError ss)) $ do
+  go (d@(TypeInstanceDeclaration sa@(ss, _) ch idx dictName deps className tys body)) = do
+    let className' = qualifyWithResolved className
+    rethrow (addHint (ErrorInInstance (qualifyWithResolved className) tys) . addHint (positionedError ss)) $ do
       env <- getEnv
       let qualifiedDictName = Qualified (Just moduleName) dictName
       flip (traverse_ . traverse_) (typeClassDictionaries env) $ \dictionaries ->
         guardWith (errorMessage (DuplicateInstance dictName ss)) $
           not (M.member qualifiedDictName dictionaries)
-      case M.lookup className (typeClasses env) of
+      case M.lookup className' (typeClasses env) of
         Nothing -> internalError "typeCheckAll: Encountered unknown type class in instance declaration"
         Just typeClass -> do
-          checkInstanceArity dictName className typeClass tys
+          checkInstanceArity dictName className' typeClass tys
           (deps', kinds', tys', vars) <- withFreshSubstitution $ checkInstanceDeclaration moduleName (sa, deps, className, tys)
           sequence_ (zipWith (checkTypeClassInstance typeClass) [0..] tys')
-          let nonOrphanModules = findNonOrphanModules className typeClass tys'
-          checkOrphanInstance dictName className tys' nonOrphanModules
+          let nonOrphanModules = findNonOrphanModules className' typeClass tys'
+          checkOrphanInstance dictName className' tys' nonOrphanModules
           let qualifiedChain = Qualified (Just moduleName) <$> ch
-          checkOverlappingInstance qualifiedChain dictName className typeClass tys' nonOrphanModules
+          checkOverlappingInstance qualifiedChain dictName className' typeClass tys' nonOrphanModules
           _ <- traverseTypeInstanceBody checkInstanceMembers body
           deps'' <- (traverse . overConstraintArgs . traverse) replaceAllTypeSynonyms deps'
-          let dict = TypeClassDictionaryInScope qualifiedChain idx qualifiedDictName [] className vars kinds' tys' (Just deps'')
-          addTypeClassDictionaries (Just moduleName) . M.singleton className $ M.singleton (tcdValue dict) (pure dict)
+          let dict = TypeClassDictionaryInScope qualifiedChain idx qualifiedDictName [] className' vars kinds' tys' (Just deps'')
+          addTypeClassDictionaries (Just moduleName) . M.singleton className' $ M.singleton (tcdValue dict) (pure dict)
           return d
 
   checkInstanceArity :: Ident -> Qualified (ProperName 'ClassName) -> TypeClassData -> [SourceType] -> m ()
@@ -453,8 +454,8 @@ typeCheckAll moduleName _ = traverse go
     typeModule :: SourceType -> Maybe ModuleName
     typeModule (TypeVar _ _) = Nothing
     typeModule (TypeLevelString _ _) = Nothing
-    typeModule (TypeConstructor _ (Qualified (Just mn'') _)) = Just mn''
-    typeModule (TypeConstructor _ (Qualified Nothing _)) = internalError "Unqualified type name in findNonOrphanModules"
+    typeModule (TypeConstructor _ (Resolved (Just mn'') _)) = Just mn''
+    typeModule (TypeConstructor _ (Resolved Nothing _)) = internalError "Unresolved type name in findNonOrphanModules"
     typeModule (TypeApp _ t1 _) = typeModule t1
     typeModule (KindApp _ t1 _) = typeModule t1
     typeModule (KindedType _ t1 _) = typeModule t1
@@ -599,13 +600,15 @@ typeCheckModule (Module ss coms mn decls (Just exps)) =
   where
   qualify' :: a -> Qualified a
   qualify' = Qualified (Just mn)
+  resolve' :: a -> Resolved a
+  resolve' = Resolved (Just mn) . Unqualified
 
   getSuperClassExportCheck = do
     classesToSuperClasses <- gets
       ( M.map
         ( S.fromList
         . filter (\(Qualified mn' _) -> mn' == Just mn)
-        . fmap constraintClass
+        . fmap (qualifyWithResolved . constraintClass)
         . typeClassSuperclasses
         )
       . typeClasses
@@ -651,7 +654,7 @@ typeCheckModule (Module ss coms mn decls (Just exps)) =
         for_ (M.lookup (qualify' dctor) (dataConstructors env)) $ \(_, _, ty, _) ->
           checkExport dr (extract ty)
   checkMemberExport extract dr@(ValueRef _ name) = do
-    ty <- lookupVariable (qualify' name)
+    ty <- lookupVariable (resolve' name)
     checkExport dr (extract ty)
   checkMemberExport _ _ = return ()
 
@@ -700,7 +703,7 @@ typeCheckModule (Module ss coms mn decls (Just exps)) =
     findTcons :: SourceType -> [DeclarationRef]
     findTcons = everythingOnTypes (++) go
       where
-      go (TypeConstructor _ (Qualified (Just mn') name)) | mn' == mn =
+      go (TypeConstructor _ (Resolved (Just mn') (Qualified _ name))) | mn' == mn =
         [TypeRef (declRefSourceSpan ref) name (internalError "Data constructors unused in checkTypesAreExported")]
       go _ = []
 
@@ -714,8 +717,8 @@ typeCheckModule (Module ss coms mn decls (Just exps)) =
       where
       go (ConstrainedType _ c _) = (fmap (TypeClassRef (declRefSourceSpan ref)) . extractCurrentModuleClass . constraintClass) c
       go _ = []
-    extractCurrentModuleClass :: Qualified (ProperName 'ClassName) -> [ProperName 'ClassName]
-    extractCurrentModuleClass (Qualified (Just mn') name) | mn == mn' = [name]
+    extractCurrentModuleClass :: Resolved (ProperName 'ClassName) -> [ProperName 'ClassName]
+    extractCurrentModuleClass (Resolved (Just mn') (Qualified _ name)) | mn == mn' = [name]
     extractCurrentModuleClass _ = []
 
   checkClassMembersAreExported :: DeclarationRef -> m ()

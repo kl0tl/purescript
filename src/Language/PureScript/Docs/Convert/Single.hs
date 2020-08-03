@@ -147,18 +147,17 @@ convertDeclaration (P.TypeClassDeclaration sa _ args implies fundeps ds) title =
 convertDeclaration (P.TypeInstanceDeclaration (ss, com) _ _ _ constraints className tys _) title =
   Just (Left ((classNameString, AugmentClass) : map (, AugmentType) typeNameStrings, AugmentChild childDecl))
   where
-  classNameString = unQual className
+  classNameString = P.runProperName $ P.unresolve className
   typeNameStrings = ordNub (concatMap (P.everythingOnTypes (++) extractProperNames) tys)
-  unQual x = let (P.Qualified _ y) = x in P.runProperName y
 
-  extractProperNames (P.TypeConstructor _ n) = [unQual n]
+  extractProperNames (P.TypeConstructor _ n) = [P.runProperName $ P.unresolve n]
   extractProperNames _ = []
 
   childDecl = ChildDeclaration title (convertComments com) (Just ss) (ChildInstance (fmap ($> ()) constraints) (classApp $> ()))
   classApp = foldl' P.srcTypeApp (P.srcTypeConstructor (fmap P.coerceProperName className)) tys
-convertDeclaration (P.ValueFixityDeclaration sa fixity (P.Qualified mn alias) _) title =
+convertDeclaration (P.ValueFixityDeclaration sa fixity (P.Resolved mn (P.Qualified _ alias)) _) title =
   Just . Right $ mkDeclaration sa title (AliasDeclaration fixity (P.Qualified mn (Right alias)))
-convertDeclaration (P.TypeFixityDeclaration sa fixity (P.Qualified mn alias) _) title =
+convertDeclaration (P.TypeFixityDeclaration sa fixity (P.Resolved mn (P.Qualified _ alias)) _) title =
   Just . Right $ mkDeclaration sa title (AliasDeclaration fixity (P.Qualified mn (Left alias)))
 convertDeclaration _ _ = Nothing
 

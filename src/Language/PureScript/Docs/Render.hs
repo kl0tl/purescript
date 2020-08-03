@@ -38,7 +38,7 @@ renderDeclaration Declaration{..} =
       ]
     ExternDataDeclaration kind' ->
       [ keywordData
-      , renderType (P.TypeConstructor () (notQualified declTitle))
+      , renderType (P.TypeConstructor () (notResolved declTitle))
       , syntax "::"
       , renderType kind'
       ]
@@ -111,19 +111,19 @@ renderConstraints constraints
     mintersperse (syntax "," <> sp)
                  (map renderConstraint constraints)
 
-notQualified :: Text -> P.Qualified (P.ProperName a)
-notQualified = P.Qualified Nothing . P.ProperName
+notResolved :: Text -> P.Resolved (P.ProperName a)
+notResolved = P.mkUnresolved . P.ProperName
 
 ident' :: Text -> RenderedCode
-ident' = ident . P.Qualified Nothing . P.Ident
+ident' = ident . P.Unqualified . P.Ident
 
 dataCtor' :: Text -> RenderedCode
-dataCtor' = dataCtor . notQualified
+dataCtor' = dataCtor . P.Unqualified . P.ProperName
 
 typeApp :: Text -> [(Text, Maybe Type')] -> Type'
 typeApp title typeArgs =
   foldl (P.TypeApp ())
-        (P.TypeConstructor () (notQualified title))
+        (P.TypeConstructor () (notResolved title))
         (map toTypeVar typeArgs)
 
 toTypeVar :: (Text, Maybe Type') -> Type'

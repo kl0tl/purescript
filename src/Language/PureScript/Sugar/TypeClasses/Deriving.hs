@@ -61,7 +61,7 @@ extractNewtypeName :: ModuleName -> [SourceType] -> Maybe (ModuleName, ProperNam
 extractNewtypeName _ [] = Nothing
 extractNewtypeName mn xs = go (last xs) where
   go (TypeApp _ ty (TypeVar _ _)) = go ty
-  go (TypeConstructor _ name) = Just (qualify mn name)
+  go (TypeConstructor _ (Resolved mn' (Qualified _ name))) = Just (fromMaybe mn mn', name)
   go _ = Nothing
 
 -- | Elaborates deriving instance declarations by code generation.
@@ -104,7 +104,7 @@ deriveInstances externs (Module ss coms mn ds exts) =
         fromLocalDecl (TypeClassDeclaration _ cl args cons deps _) =
           NewtypeDerivedInstances (M.singleton (mn, cl) (map fst args, cons, deps)) mempty
         fromLocalDecl (TypeInstanceDeclaration _ _ _ _ _ cl tys _) =
-          foldMap (\nm -> NewtypeDerivedInstances mempty (S.singleton (qualify mn cl, nm))) (extractNewtypeName mn tys)
+          foldMap (\nm -> NewtypeDerivedInstances mempty (S.singleton (qualify mn $ qualifyWithResolved cl, nm))) (extractNewtypeName mn tys)
         fromLocalDecl _ = mempty
 
 -- | Takes a declaration, and if the declaration is a deriving TypeInstanceDeclaration,
@@ -119,73 +119,73 @@ deriveInstance
   -> Declaration
   -> m Declaration
 deriveInstance mn syns kinds _ ds (TypeInstanceDeclaration sa@(ss, _) ch idx nm deps className tys DerivedInstance)
-  | className == Qualified (Just dataEq) (ProperName "Eq")
+  | qualifyWithResolved className == Qualified (Just dataEq) (ProperName "Eq")
   = case tys of
       [ty] | Just (Qualified mn' tyCon, _) <- unwrapTypeConstructor ty
            , mn == fromMaybe mn mn'
            -> TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance <$> deriveEq ss mn syns kinds ds tyCon
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataEq) (ProperName "Eq1")
+           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor (qualifyWithResolved className) tys ty
+      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance (qualifyWithResolved className) tys 1
+  | qualifyWithResolved className == Qualified (Just dataEq) (ProperName "Eq1")
   = case tys of
       [ty] | Just (Qualified mn' _, _) <- unwrapTypeConstructor ty
            , mn == fromMaybe mn mn'
            -> pure . TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance $ deriveEq1 ss
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataOrd) (ProperName "Ord")
+           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor (qualifyWithResolved className) tys ty
+      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance (qualifyWithResolved className) tys 1
+  | qualifyWithResolved className == Qualified (Just dataOrd) (ProperName "Ord")
   = case tys of
       [ty] | Just (Qualified mn' tyCon, _) <- unwrapTypeConstructor ty
            , mn == fromMaybe mn mn'
            -> TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance <$> deriveOrd ss mn syns kinds ds tyCon
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataOrd) (ProperName "Ord1")
+           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor (qualifyWithResolved className) tys ty
+      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance (qualifyWithResolved className) tys 1
+  | qualifyWithResolved className == Qualified (Just dataOrd) (ProperName "Ord1")
   = case tys of
       [ty] | Just (Qualified mn' _, _) <- unwrapTypeConstructor ty
            , mn == fromMaybe mn mn'
            -> pure . TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance $ deriveOrd1 ss
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataFunctor) (ProperName "Functor")
+           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor (qualifyWithResolved className) tys ty
+      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance (qualifyWithResolved className) tys 1
+  | qualifyWithResolved className == Qualified (Just dataFunctor) (ProperName "Functor")
   = case tys of
       [ty] | Just (Qualified mn' tyCon, _) <- unwrapTypeConstructor ty
            , mn == fromMaybe mn mn'
            -> TypeInstanceDeclaration sa ch idx nm deps className tys . ExplicitInstance <$> deriveFunctor ss mn syns kinds ds tyCon
-           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys ty
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 1
-  | className == Qualified (Just dataNewtype) (ProperName "Newtype")
+           | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor (qualifyWithResolved className) tys ty
+      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance (qualifyWithResolved className) tys 1
+  | qualifyWithResolved className == Qualified (Just dataNewtype) (ProperName "Newtype")
   = case tys of
       [wrappedTy, unwrappedTy]
         | Just (Qualified mn' tyCon, args) <- unwrapTypeConstructor wrappedTy
         , mn == fromMaybe mn mn'
         -> do (inst, actualUnwrappedTy) <- deriveNewtype ss mn syns kinds ds tyCon args unwrappedTy
               return $ TypeInstanceDeclaration sa ch idx nm deps className [wrappedTy, actualUnwrappedTy] (ExplicitInstance inst)
-        | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys wrappedTy
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 2
-  | className == Qualified (Just dataGenericRep) (ProperName C.generic)
+        | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor (qualifyWithResolved className) tys wrappedTy
+      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance (qualifyWithResolved className) tys 2
+  | qualifyWithResolved className == Qualified (Just dataGenericRep) (ProperName C.generic)
   = case tys of
       [actualTy, repTy]
         | Just (Qualified mn' tyCon, args) <- unwrapTypeConstructor actualTy
         , mn == fromMaybe mn mn'
         -> do (inst, inferredRepTy) <- deriveGenericRep ss mn syns kinds ds tyCon args repTy
               return $ TypeInstanceDeclaration sa ch idx nm deps className [actualTy, inferredRepTy] (ExplicitInstance inst)
-        | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys actualTy
-      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance className tys 2
-  | otherwise = throwError . errorMessage' ss $ CannotDerive className tys
+        | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor (qualifyWithResolved className) tys actualTy
+      _ -> throwError . errorMessage' ss $ InvalidDerivedInstance (qualifyWithResolved className) tys 2
+  | otherwise = throwError . errorMessage' ss $ CannotDerive (qualifyWithResolved className) tys
 deriveInstance mn syns kinds ndis ds (TypeInstanceDeclaration sa@(ss, _) ch idx nm deps className tys NewtypeInstance) =
   case tys of
     _ : _ | Just (Qualified mn' tyCon, args) <- unwrapTypeConstructor (last tys)
           , mn == fromMaybe mn mn'
           -> TypeInstanceDeclaration sa ch idx nm deps className tys . NewtypeInstanceWithDictionary <$> deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyCon args
-          | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor className tys (last tys)
-    _ -> throwError . errorMessage' ss $ InvalidNewtypeInstance className tys
+          | otherwise -> throwError . errorMessage' ss $ ExpectedTypeConstructor (qualifyWithResolved className) tys (last tys)
+    _ -> throwError . errorMessage' ss $ InvalidNewtypeInstance (qualifyWithResolved className) tys
 deriveInstance _ _ _ _ _ e = return e
 
 unwrapTypeConstructor :: SourceType -> Maybe (Qualified (ProperName 'TypeName), [SourceType])
 unwrapTypeConstructor = fmap (second reverse) . go
   where
-  go (TypeConstructor _ tyCon) = Just (tyCon, [])
+  go (TypeConstructor _ tyCon) = Just (qualifyWithResolved tyCon, [])
   go (TypeApp _ ty arg) = do
     (tyCon, args) <- go ty
     return (tyCon, arg : args)
@@ -199,7 +199,7 @@ deriveNewtypeInstance
   -> SynonymMap
   -> KindMap
   -> NewtypeDerivedInstances
-  -> Qualified (ProperName 'ClassName)
+  -> Resolved (ProperName 'ClassName)
   -> [Declaration]
   -> [SourceType]
   -> ProperName 'TypeName
@@ -210,6 +210,8 @@ deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyConNm dargs = do
     tyCon <- findTypeDecl ss tyConNm ds
     go tyCon
   where
+    className' = qualifyWithResolved className
+
     go (DataDeclaration _ Newtype _ tyArgNames [(DataConstructorDeclaration _ _ [(_, wrapped)])]) = do
       -- The newtype might not be applied to all type arguments.
       -- This is okay as long as the newtype wraps something which ends with
@@ -225,8 +227,8 @@ deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyConNm dargs = do
         Just wrapped'' -> do
           let subst = zipWith (\(name, _) t -> (name, t)) tyArgNames dargs
           return (DeferredDictionary className (init tys ++ [replaceAllTypeVars subst wrapped'']))
-        Nothing -> throwError . errorMessage' ss $ InvalidNewtypeInstance className tys
-    go _ = throwError . errorMessage' ss $ InvalidNewtypeInstance className tys
+        Nothing -> throwError . errorMessage' ss $ InvalidNewtypeInstance className' tys
+    go _ = throwError . errorMessage' ss $ InvalidNewtypeInstance className' tys
 
     takeReverse :: Int -> [a] -> [a]
     takeReverse n = take n . reverse
@@ -239,9 +241,9 @@ deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyConNm dargs = do
 
     verifySuperclasses :: m ()
     verifySuperclasses =
-      for_ (M.lookup (qualify mn className) (ndiClasses ndis)) $ \(args, superclasses, _) ->
+      for_ (M.lookup (qualify mn className') (ndiClasses ndis)) $ \(args, superclasses, _) ->
         for_ superclasses $ \Constraint{..} -> do
-          let constraintClass' = qualify (error "verifySuperclasses: unknown class module") constraintClass
+          let constraintClass' = qualify (error "verifySuperclasses: unknown class module") $ qualifyWithResolved constraintClass
           for_ (M.lookup constraintClass' (ndiClasses ndis)) $ \(_, _, deps) ->
             -- We need to check whether the newtype is mentioned, because of classes like MonadWriter
             -- with its Monoid superclass constraint.
@@ -259,8 +261,8 @@ deriveNewtypeInstance ss mn syns kinds ndis className ds tys tyConNm dargs = do
                   -- be possible, so we warn again.
                   for_ (extractNewtypeName mn tys) $ \nm ->
                     unless ((constraintClass', nm) `S.member` ndiDerivedInstances ndis) $
-                      tell . errorMessage' ss $ MissingNewtypeSuperclassInstance constraintClass className tys
-                else tell . errorMessage' ss $ UnverifiableSuperclassInstance constraintClass className tys
+                      tell . errorMessage' ss $ MissingNewtypeSuperclassInstance (qualifyWithResolved constraintClass) className' tys
+                else tell . errorMessage' ss $ UnverifiableSuperclassInstance (qualifyWithResolved constraintClass) className' tys
 
 dataGenericRep :: ModuleName
 dataGenericRep = ModuleName "Data.Generic.Rep"
@@ -307,13 +309,13 @@ deriveGenericRep ss mn syns kinds ds tyConNm tyConArgs repTy = do
                       lamCase ss' x
                         [ CaseAlternative
                             [NullBinder]
-                            (unguarded (App toName (Var ss' (Qualified Nothing x))))
+                            (unguarded (App toName (Var ss' (mkUnresolved x))))
                         ]
                    , ValueDecl (ss', []) (Ident "from") Public [] $ unguarded $
                       lamCase ss' x
                         [ CaseAlternative
                             [NullBinder]
-                            (unguarded (App fromName (Var ss' (Qualified Nothing x))))
+                            (unguarded (App fromName (Var ss' (mkUnresolved x))))
                         ]
                    ]
                | otherwise =
@@ -352,8 +354,8 @@ deriveGenericRep ss mn syns kinds ds tyConNm tyConArgs repTy = do
                                   (srcTypeLevelString $ mkString (runProperName ctorName)))
                          ctorTy
                , CaseAlternative [ ConstructorBinder ss constructor [matchProduct] ]
-                                 (unguarded (foldl' App (Constructor ss (Qualified (Just mn) ctorName)) ctorArgs))
-               , CaseAlternative [ ConstructorBinder ss (Qualified (Just mn) ctorName) matchCtor ]
+                                 (unguarded (foldl' App (Constructor ss (mkResolved ctorName mn)) ctorArgs))
+               , CaseAlternative [ ConstructorBinder ss (mkResolved ctorName mn) matchCtor ]
                                  (unguarded (constructor' mkProduct))
                )
 
@@ -376,9 +378,9 @@ deriveGenericRep ss mn syns kinds ds tyConNm tyConArgs repTy = do
       argName <- freshIdent "arg"
       pure ( srcTypeApp (srcTypeConstructor argument) arg
            , ConstructorBinder ss argument [ VarBinder ss argName ]
-           , Var ss (Qualified Nothing argName)
+           , Var ss (mkUnresolved argName)
            , VarBinder ss argName
-           , argument' (Var ss (Qualified Nothing argName))
+           , argument' (Var ss (mkUnresolved argName))
            )
 
     underBinder :: (Binder -> Binder) -> CaseAlternative -> CaseAlternative
@@ -394,40 +396,40 @@ deriveGenericRep ss mn syns kinds ds tyConNm tyConArgs repTy = do
     toRepTy ctors = foldr1 (\f -> srcTypeApp (srcTypeApp sumCtor f)) ctors
 
     toName :: Expr
-    toName = Var ss (Qualified (Just dataGenericRep) (Ident "to"))
+    toName = Var ss (mkResolved (Ident "to") dataGenericRep)
 
     fromName :: Expr
-    fromName = Var ss (Qualified (Just dataGenericRep) (Ident "from"))
+    fromName = Var ss (mkResolved (Ident "from") dataGenericRep)
 
     noCtors :: SourceType
-    noCtors = srcTypeConstructor (Qualified (Just dataGenericRep) (ProperName "NoConstructors"))
+    noCtors = srcTypeConstructor (mkResolved (ProperName "NoConstructors") dataGenericRep)
 
     noArgs :: SourceType
-    noArgs = srcTypeConstructor (Qualified (Just dataGenericRep) (ProperName "NoArguments"))
+    noArgs = srcTypeConstructor (mkResolved (ProperName "NoArguments") dataGenericRep)
 
     noArgs' :: Expr
-    noArgs' = Constructor ss (Qualified (Just dataGenericRep) (ProperName "NoArguments"))
+    noArgs' = Constructor ss (mkResolved (ProperName "NoArguments") dataGenericRep)
 
     sumCtor :: SourceType
-    sumCtor = srcTypeConstructor (Qualified (Just dataGenericRep) (ProperName "Sum"))
+    sumCtor = srcTypeConstructor (mkResolved (ProperName "Sum") dataGenericRep)
 
-    inl :: Qualified (ProperName 'ConstructorName)
-    inl = Qualified (Just dataGenericRep) (ProperName "Inl")
+    inl :: Resolved (ProperName 'ConstructorName)
+    inl = mkResolved (ProperName "Inl") dataGenericRep
 
-    inr :: Qualified (ProperName 'ConstructorName)
-    inr = Qualified (Just dataGenericRep) (ProperName "Inr")
+    inr :: Resolved (ProperName 'ConstructorName)
+    inr = mkResolved (ProperName "Inr") dataGenericRep
 
-    productName :: Qualified (ProperName ty)
-    productName = Qualified (Just dataGenericRep) (ProperName "Product")
+    productName :: Resolved (ProperName ty)
+    productName = mkResolved (ProperName "Product") dataGenericRep
 
-    constructor :: Qualified (ProperName ty)
-    constructor = Qualified (Just dataGenericRep) (ProperName "Constructor")
+    constructor :: Resolved (ProperName ty)
+    constructor = mkResolved (ProperName "Constructor") dataGenericRep
 
     constructor' :: Expr -> Expr
     constructor' = App (Constructor ss constructor)
 
-    argument :: Qualified (ProperName ty)
-    argument = Qualified (Just dataGenericRep) (ProperName "Argument")
+    argument :: Resolved (ProperName ty)
+    argument = mkResolved (ProperName "Argument") dataGenericRep
 
     argument' :: Expr -> Expr
     argument' = App (Constructor ss argument)
@@ -460,13 +462,13 @@ deriveEq ss mn syns kinds ds tyConNm = do
     mkEqFunction _ = internalError "mkEqFunction: expected DataDeclaration"
 
     preludeConj :: Expr -> Expr -> Expr
-    preludeConj = App . App (Var ss (Qualified (Just (ModuleName "Data.HeytingAlgebra")) (Ident C.conj)))
+    preludeConj = App . App (Var ss (mkResolved (Ident C.conj) (ModuleName "Data.HeytingAlgebra")))
 
     preludeEq :: Expr -> Expr -> Expr
-    preludeEq = App . App (Var ss (Qualified (Just dataEq) (Ident C.eq)))
+    preludeEq = App . App (Var ss (mkResolved (Ident C.eq) dataEq))
 
     preludeEq1 :: Expr -> Expr -> Expr
-    preludeEq1 = App . App (Var ss (Qualified (Just dataEq) (Ident C.eq1)))
+    preludeEq1 = App . App (Var ss (mkResolved (Ident C.eq1) dataEq))
 
     addCatch :: [CaseAlternative] -> [CaseAlternative]
     addCatch xs
@@ -480,10 +482,10 @@ deriveEq ss mn syns kinds ds tyConNm = do
       identsL <- replicateM (length tys) (freshIdent "l")
       identsR <- replicateM (length tys) (freshIdent "r")
       tys' <- mapM (replaceAllTypeSynonymsM syns kinds . snd) tys
-      let tests = zipWith3 toEqTest (map (Var ss . Qualified Nothing) identsL) (map (Var ss . Qualified Nothing) identsR) tys'
+      let tests = zipWith3 toEqTest (map (Var ss . mkUnresolved) identsL) (map (Var ss . mkUnresolved) identsR) tys'
       return $ CaseAlternative [caseBinder identsL, caseBinder identsR] (unguarded (conjAll tests))
       where
-      caseBinder idents = ConstructorBinder ss (Qualified (Just mn) ctorName) (map (VarBinder ss) idents)
+      caseBinder idents = ConstructorBinder ss (mkResolved ctorName mn) (map (VarBinder ss) idents)
 
     conjAll :: [Expr] -> Expr
     conjAll [] = Literal ss (BooleanLiteral True)
@@ -504,7 +506,7 @@ deriveEq1 ss =
   [ ValueDecl (ss, []) (Ident C.eq1) Public [] (unguarded preludeEq)]
   where
     preludeEq :: Expr
-    preludeEq = Var ss (Qualified (Just dataEq) (Ident C.eq))
+    preludeEq = Var ss (mkResolved (Ident C.eq) dataEq)
 
 deriveOrd
   :: forall m
@@ -540,8 +542,8 @@ deriveOrd ss mn syns kinds ds tyConNm = do
       where
       catchAll = CaseAlternative [NullBinder, NullBinder] (unguarded (orderingCtor "EQ"))
 
-    orderingName :: Text -> Qualified (ProperName a)
-    orderingName = Qualified (Just (ModuleName "Data.Ordering")) . ProperName
+    orderingName :: Text -> Resolved (ProperName a)
+    orderingName = Resolved (Just (ModuleName "Data.Ordering")) . Unqualified . ProperName
 
     orderingCtor :: Text -> Expr
     orderingCtor = Constructor ss . orderingName
@@ -550,23 +552,23 @@ deriveOrd ss mn syns kinds ds tyConNm = do
     orderingBinder name = ConstructorBinder ss (orderingName name) []
 
     ordCompare :: Expr -> Expr -> Expr
-    ordCompare = App . App (Var ss (Qualified (Just dataOrd) (Ident C.compare)))
+    ordCompare = App . App (Var ss (mkResolved (Ident C.compare) dataOrd))
 
     ordCompare1 :: Expr -> Expr -> Expr
-    ordCompare1 = App . App (Var ss (Qualified (Just dataOrd) (Ident C.compare1)))
+    ordCompare1 = App . App (Var ss (mkResolved (Ident C.compare1) dataOrd))
 
     mkCtorClauses :: (DataConstructorDeclaration, Bool) -> m [CaseAlternative]
     mkCtorClauses ((DataConstructorDeclaration _ ctorName tys), isLast) = do
       identsL <- replicateM (length tys) (freshIdent "l")
       identsR <- replicateM (length tys) (freshIdent "r")
       tys' <- mapM (replaceAllTypeSynonymsM syns kinds . snd) tys
-      let tests = zipWith3 toOrdering (map (Var ss . Qualified Nothing) identsL) (map (Var ss . Qualified Nothing) identsR) tys'
-          extras | not isLast = [ CaseAlternative [ ConstructorBinder ss (Qualified (Just mn) ctorName) (replicate (length tys) NullBinder)
+      let tests = zipWith3 toOrdering (map (Var ss . mkUnresolved) identsL) (map (Var ss . mkUnresolved) identsR) tys'
+          extras | not isLast = [ CaseAlternative [ ConstructorBinder ss (mkResolved ctorName mn) (replicate (length tys) NullBinder)
                                                   , NullBinder
                                                   ]
                                                   (unguarded (orderingCtor "LT"))
                                 , CaseAlternative [ NullBinder
-                                                  , ConstructorBinder ss (Qualified (Just mn) ctorName) (replicate (length tys) NullBinder)
+                                                  , ConstructorBinder ss (mkResolved ctorName mn) (replicate (length tys) NullBinder)
                                                   ]
                                                   (unguarded (orderingCtor "GT"))
                                 ]
@@ -578,7 +580,7 @@ deriveOrd ss mn syns kinds ds tyConNm = do
              : extras
 
       where
-      caseBinder idents = ConstructorBinder ss (Qualified (Just mn) ctorName) (map (VarBinder ss) idents)
+      caseBinder idents = ConstructorBinder ss (mkResolved ctorName mn) (map (VarBinder ss) idents)
 
     appendAll :: [Expr] -> Expr
     appendAll [] = orderingCtor "EQ"
@@ -606,7 +608,7 @@ deriveOrd1 ss =
   [ ValueDecl (ss, []) (Ident C.compare1) Public [] (unguarded dataOrdCompare)]
   where
     dataOrdCompare :: Expr
-    dataOrdCompare = Var ss (Qualified (Just dataOrd) (Ident C.compare))
+    dataOrdCompare = Var ss (mkResolved (Ident C.compare) dataOrd)
 
 deriveNewtype
   :: forall m
@@ -635,12 +637,12 @@ deriveNewtype ss mn syns kinds ds tyConNm tyConArgs unwrappedTy = do
       ty' <- replaceAllTypeSynonymsM syns kinds ty
       let inst =
             [ ValueDecl (ss', []) (Ident "wrap") Public [] $ unguarded $
-                Constructor ss' (Qualified (Just mn) ctorName)
+                Constructor ss' (mkResolved ctorName mn)
             , ValueDecl (ss', []) (Ident "unwrap") Public [] $ unguarded $
                 lamCase ss' wrappedIdent
                   [ CaseAlternative
-                      [ConstructorBinder ss' (Qualified (Just mn) ctorName) [VarBinder ss' unwrappedIdent]]
-                      (unguarded (Var ss' (Qualified Nothing unwrappedIdent)))
+                      [ConstructorBinder ss' (mkResolved ctorName mn) [VarBinder ss' unwrappedIdent]]
+                      (unguarded (Var ss' (mkUnresolved unwrappedIdent)))
                   ]
             ]
           subst = zipWith ((,) . fst) args tyConArgs
@@ -669,7 +671,7 @@ lamCase2 :: SourceSpan -> Ident -> Ident -> [CaseAlternative] -> Expr
 lamCase2 ss s t = lam ss s . lam ss t . Case [mkVar ss s, mkVar ss t]
 
 mkVarMn :: SourceSpan -> Maybe ModuleName -> Ident -> Expr
-mkVarMn ss mn = Var ss . Qualified mn
+mkVarMn ss mn = Var ss . Resolved mn . Unqualified
 
 mkVar :: SourceSpan -> Ident -> Expr
 mkVar ss = mkVarMn ss Nothing
@@ -679,7 +681,8 @@ isAppliedVar (TypeApp _ (TypeVar _ _) _) = True
 isAppliedVar _ = False
 
 objectType :: Type a -> Maybe (Type a)
-objectType (TypeApp _ (TypeConstructor _ C.Record) rec) = Just rec
+objectType (TypeApp _ (TypeConstructor _ name) rec)
+  | qualifyWithResolved name == C.Record = Just rec
 objectType _ = Nothing
 
 decomposeRec :: SourceType -> Maybe [(Label, SourceType)]
@@ -722,9 +725,9 @@ deriveFunctor ss mn syns kinds ds tyConNm = do
       idents <- replicateM (length ctorTys) (freshIdent "v")
       ctorTys' <- mapM (replaceAllTypeSynonymsM syns kinds . snd) ctorTys
       args <- zipWithM transformArg idents ctorTys'
-      let ctor = Constructor ss (Qualified (Just mn) ctorName)
+      let ctor = Constructor ss (mkResolved ctorName mn)
           rebuilt = foldl' App ctor args
-          caseBinder = ConstructorBinder ss (Qualified (Just mn) ctorName) (VarBinder ss <$> idents)
+          caseBinder = ConstructorBinder ss (mkResolved ctorName mn) (VarBinder ss <$> idents)
       return $ CaseAlternative [caseBinder] (unguarded rebuilt)
       where
         fVar = mkVar ss f

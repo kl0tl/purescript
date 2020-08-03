@@ -126,7 +126,7 @@ convertOperator P.ExternsFixity{..} =
   IdeDeclValueOperator
     (IdeValueOperator
       efOperator
-      efAlias
+      (P.qualifyWithResolved efAlias)
       efPrecedence
       efAssociativity
       Nothing)
@@ -136,7 +136,7 @@ convertTypeOperator P.ExternsTypeFixity{..} =
   IdeDeclTypeOperator
     (IdeTypeOperator
       efTypeOperator
-      efTypeAlias
+      (P.qualifyWithResolved efTypeAlias)
       efTypePrecedence
       efTypeAssociativity
       Nothing)

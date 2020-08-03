@@ -162,9 +162,9 @@ inferKind = \tyToInfer ->
   go = \case
     ty@(TypeConstructor ann v) -> do
       env <- getEnv
-      case M.lookup v (E.types env) of
+      case M.lookup (qualifyWithResolved v) (E.types env) of
         Nothing ->
-          throwError . errorMessage' (fst ann) . UnknownName . fmap TyName $ v
+          throwError . errorMessage' (fst ann) . UnknownName . fmap TyName $ qualifyWithResolved v
         Just (kind, E.LocalTypeVariable) -> do
           kind' <- apply kind
           pure (ty, kind' $> ann)
@@ -172,9 +172,9 @@ inferKind = \tyToInfer ->
           pure (ty, kind $> ann)
     ConstrainedType ann' con@(Constraint ann v _ _ _) ty -> do
       env <- getEnv
-      con' <- case M.lookup (coerceProperName <$> v) (E.types env) of
+      con' <- case M.lookup (coerceProperName <$> qualifyWithResolved v) (E.types env) of
         Nothing ->
-          throwError . errorMessage' (fst ann) . UnknownName . fmap TyClassName $ v
+          throwError . errorMessage' (fst ann) . UnknownName . fmap TyClassName $ qualifyWithResolved v
         Just _ ->
           checkConstraint con
       ty' <- checkKind ty E.kindType
@@ -184,7 +184,7 @@ inferKind = \tyToInfer ->
       pure (ty, E.kindSymbol $> ann)
     ty@(TypeVar ann v) -> do
       moduleName <- unsafeCheckCurrentModule
-      kind <- apply =<< lookupTypeVariable moduleName (Qualified Nothing $ ProperName v)
+      kind <- apply =<< lookupTypeVariable moduleName (Unqualified $ ProperName v)
       pure (ty, kind $> ann)
     ty@(Skolem ann _ mbK _ _) -> do
       kind <- apply $ maybe (internalError "Skolem has no kind") id mbK
@@ -472,14 +472,14 @@ elaborateKind = \case
     pure $ E.kindSymbol $> ann
   TypeConstructor ann v -> do
     env <- getEnv
-    case M.lookup v (E.types env) of
+    case M.lookup (qualifyWithResolved v) (E.types env) of
       Nothing ->
-        throwError . errorMessage' (fst ann) . UnknownName . fmap TyName $ v
+        throwError . errorMessage' (fst ann) . UnknownName . fmap TyName $ qualifyWithResolved v
       Just (kind, _) ->
         ($> ann) <$> apply kind
   TypeVar ann a -> do
     moduleName <- unsafeCheckCurrentModule
-    kind <- apply =<< lookupTypeVariable moduleName (Qualified Nothing $ ProperName a)
+    kind <- apply =<< lookupTypeVariable moduleName (Unqualified $ ProperName a)
     pure (kind $> ann)
   (Skolem ann _ mbK _ _) -> do
     kind <- apply $ maybe (internalError "Skolem has no kind") id mbK
@@ -591,13 +591,13 @@ inferDataDeclaration
   -> DataDeclarationArgs
   -> m [(DataConstructorDeclaration, SourceType)]
 inferDataDeclaration moduleName (ann, tyName, tyArgs, ctors) = do
-  tyKind <- apply =<< lookupTypeVariable moduleName (Qualified Nothing tyName)
+  tyKind <- apply =<< lookupTypeVariable moduleName (Unqualified tyName)
   let (sigBinders, tyKind') = fromJust . completeBinderList $ tyKind
   bindLocalTypeVariables moduleName (first ProperName . snd <$> sigBinders) $ do
     tyArgs' <- for tyArgs . traverse . maybe (freshKind (fst ann)) $ replaceAllTypeSynonyms <=< apply <=< flip checkKind E.kindType
     subsumesKind (foldr ((E.-:>) . snd) E.kindType tyArgs') tyKind'
     bindLocalTypeVariables moduleName (first ProperName <$> tyArgs') $ do
-      let tyCtorName = srcTypeConstructor $ mkQualified tyName moduleName
+      let tyCtorName = srcTypeConstructor $ mkResolved tyName moduleName
           tyCtor = foldl (\ty -> srcKindApp ty . srcTypeVar . fst . snd) tyCtorName sigBinders
           tyCtor' = foldl (\ty -> srcTypeApp ty . srcTypeVar . fst) tyCtor tyArgs'
           ctorBinders = fmap (fmap (fmap Just)) $ sigBinders <> fmap (nullSourceAnn,) tyArgs'
@@ -640,7 +640,7 @@ inferTypeSynonym
   -> TypeDeclarationArgs
   -> m SourceType
 inferTypeSynonym moduleName (ann, tyName, tyArgs, tyBody) = do
-  tyKind <- apply =<< lookupTypeVariable moduleName (Qualified Nothing tyName)
+  tyKind <- apply =<< lookupTypeVariable moduleName (Unqualified tyName)
   let (sigBinders, tyKind') = fromJust . completeBinderList $ tyKind
   bindLocalTypeVariables moduleName (first ProperName . snd <$> sigBinders) $ do
     kindRes <- freshKind (fst ann)
@@ -757,7 +757,7 @@ inferClassDeclaration
   -> ClassDeclarationArgs
   -> m ([(Text, SourceType)], [SourceConstraint], [Declaration])
 inferClassDeclaration moduleName (ann, clsName, clsArgs, superClasses, decls) = do
-  clsKind <- apply =<< lookupTypeVariable moduleName (Qualified Nothing $ coerceProperName clsName)
+  clsKind <- apply =<< lookupTypeVariable moduleName (Unqualified $ coerceProperName clsName)
   let (sigBinders, clsKind') = fromJust . completeBinderList $ clsKind
   bindLocalTypeVariables moduleName (first ProperName . snd <$> sigBinders) $ do
     clsArgs' <- for clsArgs . traverse . maybe (freshKind (fst ann)) $ replaceAllTypeSynonyms <=< apply <=< flip checkKind E.kindType
@@ -813,7 +813,7 @@ applyConstraint (Constraint ann clsName kinds args dat) = do
 type InstanceDeclarationArgs =
   ( SourceAnn
   , [SourceConstraint]
-  , Qualified (ProperName 'ClassName)
+  , Resolved (ProperName 'ClassName)
   , [SourceType]
   )
 
@@ -928,14 +928,13 @@ kindsOfAll moduleName syns dats clss = withFreshSubstitution $ do
         tysUnks = synUnks <> datUnks <> clsUnks
     allUnks <- unknownsWithKinds . IS.toList $ foldMap snd tysUnks
     let mkTySub (name, unks) = do
-          let tyCtorName = mkQualified name moduleName
-              tyUnks = filter (flip IS.member unks . fst) allUnks
-              tyCtor = foldl (\ty -> srcKindApp ty . TUnknown nullSourceAnn . fst) (srcTypeConstructor tyCtorName) tyUnks
-          (tyCtorName, (tyCtor, tyUnks))
+          let tyUnks = filter (flip IS.member unks . fst) allUnks
+              tyCtor = foldl (\ty -> srcKindApp ty . TUnknown nullSourceAnn . fst) (srcTypeConstructor (mkResolved name moduleName)) tyUnks
+          (mkQualified name moduleName, (tyCtor, tyUnks))
         tySubs = fmap mkTySub tysUnks
         replaceTypeCtors = everywhereOnTypes $ \case
           TypeConstructor _ name
-            | Just (tyCtor, _) <- lookup name tySubs -> tyCtor
+            | Just (tyCtor, _) <- lookup (qualifyWithResolved name) tySubs -> tyCtor
           other -> other
         clsResultsWithKinds = flip fmap clsResultsWithUnks $ \(((clsName, clsKind), (args, supers, decls)), _) -> do
           let tyUnks = snd . fromJust $ lookup (mkQualified clsName moduleName) tySubs

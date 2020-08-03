@@ -32,11 +32,11 @@ matchExprOperators = matchOperators isBinOp extractOp fromOp reapply modOpTable
   extractOp _ = Nothing
 
   fromOp :: Expr -> Maybe (SourceSpan, Qualified (OpName 'ValueOpName))
-  fromOp (Op ss q@(Qualified _ (OpName _))) = Just (ss, q)
+  fromOp (Op ss name@(Resolved _ (Qualified _ (OpName _)))) = Just (ss, qualifyWithResolved name)
   fromOp _ = Nothing
 
   reapply :: SourceSpan -> Qualified (OpName 'ValueOpName) -> Expr -> Expr -> Expr
-  reapply ss op t1 = App (App (Op ss op) t1)
+  reapply ss op t1 = App (App (Op ss (resolveWithQualified op)) t1)
 
   modOpTable
     :: [[P.Operator (Chain Expr) () Identity Expr]]

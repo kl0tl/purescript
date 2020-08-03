@@ -205,7 +205,7 @@ bindLocalVariables
   -> m a
   -> m a
 bindLocalVariables bindings =
-  bindNames (M.fromList $ flip map bindings $ \(name, ty, visibility) -> (Qualified Nothing name, (ty, Private, visibility)))
+  bindNames (M.fromList $ flip map bindings $ \(name, ty, visibility) -> (Unqualified name, (ty, Private, visibility)))
 
 -- | Temporarily bind a collection of names to local type variables
 bindLocalTypeVariables
@@ -236,34 +236,34 @@ preservingNames action = do
 -- | Lookup the type of a value by name in the @Environment@
 lookupVariable
   :: (e ~ MultipleErrors, MonadState CheckState m, MonadError e m)
-  => Qualified Ident
+  => Resolved Ident
   -> m SourceType
-lookupVariable qual = do
+lookupVariable name = do
   env <- getEnv
-  case M.lookup qual (names env) of
-    Nothing -> throwError . errorMessage $ NameIsUndefined (disqualify qual)
+  case M.lookup (qualifyWithResolved name) (names env) of
+    Nothing -> throwError . errorMessage $ NameIsUndefined (unresolve name)
     Just (ty, _, _) -> return ty
 
 -- | Lookup the visibility of a value by name in the @Environment@
 getVisibility
   :: (e ~ MultipleErrors, MonadState CheckState m, MonadError e m)
-  => Qualified Ident
+  => Resolved Ident
   -> m NameVisibility
-getVisibility qual = do
+getVisibility name = do
   env <- getEnv
-  case M.lookup qual (names env) of
-    Nothing -> throwError . errorMessage $ NameIsUndefined (disqualify qual)
+  case M.lookup (qualifyWithResolved name) (names env) of
+    Nothing -> throwError . errorMessage $ NameIsUndefined (unresolve name)
     Just (_, _, vis) -> return vis
 
 -- | Assert that a name is visible
 checkVisibility
   :: (e ~ MultipleErrors, MonadState CheckState m, MonadError e m)
-  => Qualified Ident
+  => Resolved Ident
   -> m ()
-checkVisibility name@(Qualified _ var) = do
+checkVisibility name = do
   vis <- getVisibility name
   case vis of
-    Undefined -> throwError . errorMessage $ CycleInDeclaration var
+    Undefined -> throwError . errorMessage $ CycleInDeclaration (unresolve name)
     _ -> return ()
 
 -- | Lookup the kind of a type by name in the @Environment@
@@ -286,7 +286,7 @@ getEnv = checkEnv <$> get
 getLocalContext :: MonadState CheckState m => m Context
 getLocalContext = do
   env <- getEnv
-  return [ (ident, ty') | (Qualified Nothing ident@Ident{}, (ty', _, Defined)) <- M.toList (names env) ]
+  return [ (ident, ty') | (Unqualified ident@Ident{}, (ty', _, Defined)) <- M.toList (names env) ]
 
 -- | Update the @Environment@
 putEnv :: (MonadState CheckState m) => Environment -> m ()

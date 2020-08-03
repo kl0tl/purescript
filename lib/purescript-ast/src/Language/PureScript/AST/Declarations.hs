@@ -448,19 +448,19 @@ data Declaration
   -- A type instance declaration (instance chain, chain index, name,
   -- dependencies, class name, instance types, member declarations)
   --
-  | TypeInstanceDeclaration SourceAnn [Ident] Integer Ident [SourceConstraint] (Qualified (ProperName 'ClassName)) [SourceType] TypeInstanceBody
+  | TypeInstanceDeclaration SourceAnn [Ident] Integer Ident [SourceConstraint] (Resolved (ProperName 'ClassName)) [SourceType] TypeInstanceBody
   deriving (Show)
 
-data ValueFixity = ValueFixity Fixity (Qualified (Either Ident (ProperName 'ConstructorName))) (OpName 'ValueOpName)
+data ValueFixity = ValueFixity Fixity (Resolved (Either Ident (ProperName 'ConstructorName))) (OpName 'ValueOpName)
   deriving (Eq, Ord, Show)
 
-data TypeFixity = TypeFixity Fixity (Qualified (ProperName 'TypeName)) (OpName 'TypeOpName)
+data TypeFixity = TypeFixity Fixity (Resolved (ProperName 'TypeName)) (OpName 'TypeOpName)
   deriving (Eq, Ord, Show)
 
-pattern ValueFixityDeclaration :: SourceAnn -> Fixity -> Qualified (Either Ident (ProperName 'ConstructorName)) -> OpName 'ValueOpName -> Declaration
+pattern ValueFixityDeclaration :: SourceAnn -> Fixity -> Resolved (Either Ident (ProperName 'ConstructorName)) -> OpName 'ValueOpName -> Declaration
 pattern ValueFixityDeclaration sa fixity name op = FixityDeclaration sa (Left (ValueFixity fixity name op))
 
-pattern TypeFixityDeclaration :: SourceAnn -> Fixity -> Qualified (ProperName 'TypeName) -> OpName 'TypeOpName -> Declaration
+pattern TypeFixityDeclaration :: SourceAnn -> Fixity -> Resolved (ProperName 'TypeName) -> OpName 'TypeOpName -> Declaration
 pattern TypeFixityDeclaration sa fixity name op = FixityDeclaration sa (Right (TypeFixity fixity name op))
 
 -- | The members of a type class instance declaration
@@ -692,12 +692,12 @@ data Expr
   -- |
   -- Variable
   --
-  | Var SourceSpan (Qualified Ident)
+  | Var SourceSpan (Resolved Ident)
   -- |
   -- An operator. This will be desugared into a function during the "operators"
   -- phase of desugaring.
   --
-  | Op SourceSpan (Qualified (OpName 'ValueOpName))
+  | Op SourceSpan (Resolved (OpName 'ValueOpName))
   -- |
   -- Conditional (if-then-else expression)
   --
@@ -705,7 +705,7 @@ data Expr
   -- |
   -- A data constructor
   --
-  | Constructor SourceSpan (Qualified (ProperName 'ConstructorName))
+  | Constructor SourceSpan (Resolved (ProperName 'ConstructorName))
   -- |
   -- A case expression. During the case expansion phase of desugaring, top-level binders will get
   -- desugared into case expressions, hence the need for guards and multiple binders per branch here.
@@ -749,7 +749,7 @@ data Expr
   -- |
   -- A placeholder for a superclass dictionary to be turned into a TypeClassDictionary during typechecking
   --
-  | DeferredDictionary (Qualified (ProperName 'ClassName)) [SourceType]
+  | DeferredDictionary (Resolved (ProperName 'ClassName)) [SourceType]
   -- |
   -- A placeholder for an anonymous function argument
   --
@@ -853,8 +853,9 @@ $(deriveJSON (defaultOptions { sumEncoding = ObjectWithSingleField }) ''ExportSo
 
 isTrueExpr :: Expr -> Bool
 isTrueExpr (Literal _ (BooleanLiteral True)) = True
-isTrueExpr (Var _ (Qualified (Just (ModuleName "Prelude")) (Ident "otherwise"))) = True
-isTrueExpr (Var _ (Qualified (Just (ModuleName "Data.Boolean")) (Ident "otherwise"))) = True
+isTrueExpr (Var _ name)
+  | Qualified (Just (ModuleName "Prelude")) (Ident "otherwise") <- qualifyWithResolved name = True
+  | Qualified (Just (ModuleName "Data.Boolean")) (Ident "otherwise") <- qualifyWithResolved name = True
 isTrueExpr (TypedValue _ e _) = isTrueExpr e
 isTrueExpr (PositionedValue _ _ e) = isTrueExpr e
 isTrueExpr _ = False

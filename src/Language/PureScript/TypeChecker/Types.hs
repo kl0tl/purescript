@@ -118,7 +118,7 @@ typesOf bindingGroupType moduleName vals = withFreshSubstitution $ do
         -- ambiguous types to be inferred if they can be solved by some functional
         -- dependency.
         conData <- forM unsolved $ \(_, _, con) -> do
-          let findClass = fromMaybe (internalError "entails: type class not found in environment") . M.lookup (constraintClass con)
+          let findClass = fromMaybe (internalError "entails: type class not found in environment") . M.lookup (qualifyWithResolved $ constraintClass con)
           TypeClassData{ typeClassDependencies } <- gets (findClass . typeClasses . checkEnv)
           let
             -- The set of unknowns mentioned in each argument.
@@ -414,8 +414,8 @@ infer' (Var ss var) = do
     _ -> return $ TypedValue' True (Var ss var) ty
 infer' v@(Constructor _ c) = do
   env <- getEnv
-  case M.lookup c (dataConstructors env) of
-    Nothing -> throwError . errorMessage . UnknownName . fmap DctorName $ c
+  case M.lookup (qualifyWithResolved c) (dataConstructors env) of
+    Nothing -> throwError . errorMessage . UnknownName . fmap DctorName $ qualifyWithResolved c
     Just (_, _, ty, _) -> do (v', ty') <- sndM (introduceSkolemScope <=< replaceAllTypeSynonyms) <=< instantiatePolyTypeWithUnknowns v $ ty
                              return $ TypedValue' True v' ty'
 infer' (Case vals binders) = do
@@ -472,20 +472,20 @@ inferLetBinding seen (ValueDecl sa@(ss, _) ident nameKind [] [MkUnguarded (Typed
   TypedValue' _ val' ty'' <- warnAndRethrowWithPositionTC ss $ do
     ((args, elabTy), kind) <- kindOfWithScopedVars ty
     checkTypeKind ty kind
-    let dict = M.singleton (Qualified Nothing ident) (elabTy, nameKind, Undefined)
+    let dict = M.singleton (Unqualified ident) (elabTy, nameKind, Undefined)
     ty' <- introduceSkolemScope <=< replaceAllTypeSynonyms <=< replaceTypeWildcards $ elabTy
     if checkType
       then withScopedTypeVars moduleName args (bindNames dict (check val ty'))
       else return (TypedValue' checkType val elabTy)
-  bindNames (M.singleton (Qualified Nothing ident) (ty'', nameKind, Defined))
+  bindNames (M.singleton (Unqualified ident) (ty'', nameKind, Defined))
     $ inferLetBinding (seen ++ [ValueDecl sa ident nameKind [] [MkUnguarded (TypedValue checkType val' ty'')]]) rest ret j
 inferLetBinding seen (ValueDecl sa@(ss, _) ident nameKind [] [MkUnguarded val] : rest) ret j = do
   valTy <- freshTypeWithKind kindType
   TypedValue' _ val' valTy' <- warnAndRethrowWithPositionTC ss $ do
-    let dict = M.singleton (Qualified Nothing ident) (valTy, nameKind, Undefined)
+    let dict = M.singleton (Unqualified ident) (valTy, nameKind, Undefined)
     bindNames dict $ infer val
   warnAndRethrowWithPositionTC ss $ unifyTypes valTy valTy'
-  bindNames (M.singleton (Qualified Nothing ident) (valTy', nameKind, Defined))
+  bindNames (M.singleton (Unqualified ident) (valTy', nameKind, Defined))
     $ inferLetBinding (seen ++ [ValueDecl sa ident nameKind [] [MkUnguarded val']]) rest ret j
 inferLetBinding seen (BindingGroupDeclaration ds : rest) ret j = do
   moduleName <- unsafeCheckCurrentModule
@@ -514,17 +514,17 @@ inferBinder val (LiteralBinder _ (BooleanLiteral _)) = unifyTypes val tyBoolean 
 inferBinder val (VarBinder _ name) = return $ M.singleton name val
 inferBinder val (ConstructorBinder ss ctor binders) = do
   env <- getEnv
-  case M.lookup ctor (dataConstructors env) of
+  case M.lookup (qualifyWithResolved ctor) (dataConstructors env) of
     Just (_, _, ty, _) -> do
       (_, fn) <- instantiatePolyTypeWithUnknowns (internalError "Data constructor types cannot contain constraints") ty
       fn' <- introduceSkolemScope <=< replaceAllTypeSynonyms $ fn
       let (args, ret) = peelArgs fn'
           expected = length args
           actual = length binders
-      unless (expected == actual) . throwError . errorMessage' ss $ IncorrectConstructorArity ctor expected actual
+      unless (expected == actual) . throwError . errorMessage' ss $ IncorrectConstructorArity (qualifyWithResolved ctor) expected actual
       unifyTypes ret val
       M.unions <$> zipWithM inferBinder (reverse args) binders
-    _ -> throwError . errorMessage' ss . UnknownName . fmap DctorName $ ctor
+    _ -> throwError . errorMessage' ss . UnknownName . fmap DctorName $ qualifyWithResolved ctor
   where
   peelArgs :: Type a -> ([Type a], Type a)
   peelArgs = go []
@@ -672,9 +672,9 @@ check' val (ForAll ann ident mbK ty _) = do
         | otherwise = val
   val' <- tvToExpr <$> check skVal sk
   return $ TypedValue' True val' (ForAll ann ident mbK ty (Just scope))
-check' val t@(ConstrainedType _ con@(Constraint _ (Qualified _ (ProperName className)) _ _ _) ty) = do
+check' val t@(ConstrainedType _ con@(Constraint _ (Resolved _ (Qualified _ (ProperName className))) _ _ _) ty) = do
   dictName <- freshIdent ("dict" <> className)
-  dicts <- newDictionaries [] (Qualified Nothing dictName) con
+  dicts <- newDictionaries [] (Unqualified dictName) con
   val' <- withBindingGroupVisible $ withTypeClassDictionaries dicts $ check val ty
   return $ TypedValue' True (Abs (VarBinder nullSourceSpan dictName) (tvToExpr val')) t
 check' val u@(TUnknown _ _) = do
@@ -771,8 +771,8 @@ check' (Accessor prop val) ty = withErrorMessageHint (ErrorCheckingAccessor val 
   return $ TypedValue' True (Accessor prop val') ty
 check' v@(Constructor _ c) ty = do
   env <- getEnv
-  case M.lookup c (dataConstructors env) of
-    Nothing -> throwError . errorMessage . UnknownName . fmap DctorName $ c
+  case M.lookup (qualifyWithResolved c) (dataConstructors env) of
+    Nothing -> throwError . errorMessage . UnknownName . fmap DctorName $ qualifyWithResolved c
     Just (_, _, ty1, _) -> do
       repl <- introduceSkolemScope <=< replaceAllTypeSynonyms $ ty1
       ty' <- introduceSkolemScope ty

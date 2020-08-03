@@ -120,7 +120,7 @@ eligibleModules
   -> ModuleMap (NonEmpty Search)
 eligibleModules query@(moduleName, declaration) decls modules =
   let
-    searchDefiningModule = P.Qualified Nothing declaration :| []
+    searchDefiningModule = P.Unqualified declaration :| []
   in
     Map.insert moduleName searchDefiningModule $
       foldMap (directDependants declaration modules) (moduleName :| findReexportingModules query decls)
@@ -142,20 +142,20 @@ applySearch module_ search =
         | Just ideValue <- preview _IdeDeclValue (P.disqualify search)
         , P.isQualified search
           || not (P.LocalIdent (_ideValueIdent ideValue) `Set.member` scope) ->
-          [sp | map P.runIdent i == map identifierFromIdeDeclaration search]
+          [sp | P.qualifyWithResolved (map P.runIdent i) == map identifierFromIdeDeclaration search]
       P.Constructor sp name
         | Just ideDtor <- traverse (preview _IdeDeclDataConstructor) search ->
-          [sp | name == map _ideDtorName ideDtor]
+          [sp | P.qualifyWithResolved name == map _ideDtorName ideDtor]
       P.Op sp opName
         | Just ideOp <- traverse (preview _IdeDeclValueOperator) search ->
-          [sp | opName == map _ideValueOpName ideOp]
+          [sp | P.qualifyWithResolved opName == map _ideValueOpName ideOp]
       _ -> []
 
     goBinder _ binder = case binder of
       P.ConstructorBinder sp ctorName _
         | Just ideDtor <- traverse (preview _IdeDeclDataConstructor) search ->
-          [sp | ctorName == map _ideDtorName ideDtor]
+          [sp | P.qualifyWithResolved ctorName == map _ideDtorName ideDtor]
       P.OpBinder sp opName
         | Just op <- traverse (preview _IdeDeclValueOperator) search ->
-          [sp | opName == map _ideValueOpName op]
+          [sp | P.qualifyWithResolved opName == map _ideValueOpName op]
       _ -> []

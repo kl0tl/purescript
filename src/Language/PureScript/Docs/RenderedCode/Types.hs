@@ -351,9 +351,9 @@ aliasName for name' =
   in
     case ns of
       ValueLevel ->
-        ident (Qualified Nothing (Ident name))
+        ident (Unqualified (Ident name))
       TypeLevel ->
-        typeCtor (Qualified Nothing (ProperName name))
+        typeCtor (Unqualified (ProperName name))
 
 -- | Converts a FixityAlias into a different representation which is more
 -- useful to other functions in this module.

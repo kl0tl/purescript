@@ -47,7 +47,7 @@ desugarSignedLiterals (Module ss coms mn ds exts) =
   Module ss coms mn (map f' ds) exts
   where
   (f', _, _) = everywhereOnValues id go id
-  go (UnaryMinus ss' val) = App (Var ss' (Qualified Nothing (Ident C.negate))) val
+  go (UnaryMinus ss' val) = App (Var ss' (mkUnresolved (Ident C.negate))) val
   go other = other
 
 -- |
@@ -143,36 +143,36 @@ rebracketFiltered pred_ externs modules = do
     goExpr :: SourceSpan -> Expr -> m (SourceSpan, Expr)
     goExpr _ e@(PositionedValue pos _ _) = return (pos, e)
     goExpr _ (Op pos op) =
-      (pos,) <$> case op `M.lookup` valueAliased of
+      (pos,) <$> case qualifyWithResolved op `M.lookup` valueAliased of
         Just (Qualified mn' (Left alias)) ->
-          return $ Var pos (Qualified mn' alias)
+          return $ Var pos (Resolved mn' (Qualified mn' alias))
         Just (Qualified mn' (Right alias)) ->
-          return $ Constructor pos (Qualified mn' alias)
+          return $ Constructor pos (Resolved mn' (Qualified mn' alias))
         Nothing ->
-          throwError . errorMessage' pos . UnknownName $ fmap ValOpName op
+          throwError . errorMessage' pos . UnknownName . qualifyWithResolved $ fmap ValOpName op
     goExpr pos other = return (pos, other)
 
     goBinder :: SourceSpan -> Binder -> m (SourceSpan, Binder)
     goBinder _ b@(PositionedBinder pos _ _) = return (pos, b)
     goBinder _ (BinaryNoParensBinder (OpBinder pos op) lhs rhs) =
-      case op `M.lookup` valueAliased of
+      case qualifyWithResolved op `M.lookup` valueAliased of
         Just (Qualified mn' (Left alias)) ->
-          throwError . errorMessage' pos $ InvalidOperatorInBinder op (Qualified mn' alias)
+          throwError . errorMessage' pos $ InvalidOperatorInBinder (qualifyWithResolved op) (Qualified mn' alias)
         Just (Qualified mn' (Right alias)) ->
-          return (pos, ConstructorBinder pos (Qualified mn' alias) [lhs, rhs])
+          return (pos, ConstructorBinder pos (Resolved mn' (Qualified mn' alias)) [lhs, rhs])
         Nothing ->
-          throwError . errorMessage' pos . UnknownName $ fmap ValOpName op
+          throwError . errorMessage' pos . UnknownName . qualifyWithResolved $ fmap ValOpName op
     goBinder _ BinaryNoParensBinder{} =
       internalError "BinaryNoParensBinder has no OpBinder"
     goBinder pos other = return (pos, other)
 
     goType :: SourceSpan -> SourceType -> m SourceType
     goType pos (BinaryNoParensType ann (TypeOp ann2 op) lhs rhs) =
-      case op `M.lookup` typeAliased of
+      case qualifyWithResolved op `M.lookup` typeAliased of
         Just alias ->
-          return $ TypeApp ann (TypeApp ann (TypeConstructor ann2 alias) lhs) rhs
+          return $ TypeApp ann (TypeApp ann (TypeConstructor ann2 (resolveWithQualified alias)) lhs) rhs
         Nothing ->
-          throwError . errorMessage' pos $ UnknownName $ fmap TyOpName op
+          throwError . errorMessage' pos $ UnknownName . qualifyWithResolved $ fmap TyOpName op
     goType _ other = return other
 
 rebracketModule
@@ -250,7 +250,7 @@ externsFixities ExternsFile{..} =
       ( Qualified (Just efModuleName) op
       , internalModuleSourceSpan ""
       , Fixity assoc prec
-      , name
+      , qualifyWithResolved name
       )
 
   fromTypeFixity
@@ -261,7 +261,7 @@ externsFixities ExternsFile{..} =
       ( Qualified (Just efModuleName) op
       , internalModuleSourceSpan ""
       , Fixity assoc prec
-      , name
+      , qualifyWithResolved name
       )
 
 collectFixities :: Module -> [Either ValueFixityRecord TypeFixityRecord]
@@ -269,9 +269,9 @@ collectFixities (Module _ _ moduleName ds _) = concatMap collect ds
   where
   collect :: Declaration -> [Either ValueFixityRecord TypeFixityRecord]
   collect (ValueFixityDeclaration (ss, _) fixity name op) =
-    [Left (Qualified (Just moduleName) op, ss, fixity, name)]
+    [Left (Qualified (Just moduleName) op, ss, fixity, qualifyWithResolved name)]
   collect (TypeFixityDeclaration (ss, _) fixity name op) =
-    [Right (Qualified (Just moduleName) op, ss, fixity, name)]
+    [Right (Qualified (Just moduleName) op, ss, fixity, qualifyWithResolved name)]
   collect _ = []
 
 ensureNoDuplicates
@@ -397,7 +397,7 @@ checkFixityExports m@(Module ss _ mn ds (Just exps)) =
   getTypeOpAlias op =
     listToMaybe (mapMaybe (either (const Nothing) go <=< getFixityDecl) ds)
     where
-    go (TypeFixity _ (Qualified (Just mn') ident) op')
+    go (TypeFixity _ (Resolved (Just mn') (Qualified _ ident)) op')
       | mn == mn' && op == op' = Just ident
     go _ = Nothing
 
@@ -409,7 +409,7 @@ checkFixityExports m@(Module ss _ mn ds (Just exps)) =
   getValueOpAlias op =
     listToMaybe (mapMaybe (either go (const Nothing) <=< getFixityDecl) ds)
     where
-    go (ValueFixity _ (Qualified (Just mn') ident) op')
+    go (ValueFixity _ (Resolved (Just mn') (Qualified _ ident)) op')
       | mn == mn' && op == op' = Just ident
     go _ = Nothing
 

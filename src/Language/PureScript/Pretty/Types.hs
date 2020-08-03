@@ -65,15 +65,15 @@ convertPrettyPrintType = go
   go _ (TypeVar _ t) = PPTypeVar t
   go _ (TypeLevelString _ s) = PPTypeLevelString s
   go _ (TypeWildcard _ n) = PPTypeWildcard n
-  go _ (TypeConstructor _ c) = PPTypeConstructor c
-  go _ (TypeOp _ o) = PPTypeOp o
+  go _ (TypeConstructor _ c) = PPTypeConstructor (qualifyWithResolved c)
+  go _ (TypeOp _ o) = PPTypeOp (qualifyWithResolved o)
   go _ (Skolem _ t _ n _) = PPSkolem t n
   go _ (REmpty _) = PPRow [] Nothing
   -- Guard the remaining "complex" type atoms on the current depth value. The
   -- prior  constructors can all be printed simply so it's not really helpful to
   -- truncate them.
   go d _ | d < 0 = PPTruncated
-  go d (ConstrainedType _ (Constraint _ cls kargs args _) ty) = PPConstrainedType (cls, go (d-1) <$> kargs, go (d-1) <$> args) (go d ty)
+  go d (ConstrainedType _ (Constraint _ cls kargs args _) ty) = PPConstrainedType (qualifyWithResolved cls, go (d-1) <$> kargs, go (d-1) <$> args) (go d ty)
   go d (KindedType _ ty k) = PPKindedType (go (d-1) ty) (go (d-1) k)
   go d (BinaryNoParensType _ ty1 ty2 ty3) = PPBinaryNoParensType (go (d-1) ty1) (go (d-1) ty2) (go (d-1) ty3)
   go d (ParensInType _ ty) = PPParensInType (go (d-1) ty)

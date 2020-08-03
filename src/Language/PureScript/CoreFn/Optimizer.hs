@@ -9,7 +9,7 @@ import Language.PureScript.CoreFn.Ann
 import Language.PureScript.CoreFn.Expr
 import Language.PureScript.CoreFn.Module
 import Language.PureScript.CoreFn.Traversals
-import Language.PureScript.Names (Ident(UnusedIdent), Qualified(Qualified))
+import Language.PureScript.Names (Ident(UnusedIdent), Qualified(..), qualifyWithResolved)
 import Language.PureScript.Label
 import Language.PureScript.Types
 import qualified Language.PureScript.Constants.Prim as C
@@ -38,8 +38,8 @@ optimizeClosedRecordUpdate e = e
 
 -- | Return the labels of a closed record, or Nothing for other types or open records.
 closedRecordFields :: Type a -> Maybe [Label]
-closedRecordFields (TypeApp _ (TypeConstructor _ C.Record) row) =
-  collect row
+closedRecordFields (TypeApp _ (TypeConstructor _ name) row)
+  | C.Record <- qualifyWithResolved name = collect row
   where
     collect :: Type a -> Maybe [Label]
     collect (REmptyKinded _ _) = Just []

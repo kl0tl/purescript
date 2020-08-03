@@ -125,9 +125,9 @@ usedIdents moduleName = ordNub . usedIdents' S.empty . valdeclExpression
   (_, usedIdents', _, _, _) = everythingWithScope def usedNamesE def def def
 
   usedNamesE :: S.Set ScopedIdent -> Expr -> [Ident]
-  usedNamesE scope (Var _ (Qualified Nothing name))
+  usedNamesE scope (Var _ (Resolved Nothing (Qualified _ name)))
     | LocalIdent name `S.notMember` scope = [name]
-  usedNamesE scope (Var _ (Qualified (Just moduleName') name))
+  usedNamesE scope (Var _ (Resolved (Just moduleName') (Qualified _ name)))
     | moduleName == moduleName' && ToplevelIdent name `S.notMember` scope = [name]
   usedNamesE _ _ = []
 
@@ -139,8 +139,8 @@ usedImmediateIdents moduleName =
   def s _ = (s, [])
 
   usedNamesE :: Bool -> Expr -> (Bool, [Ident])
-  usedNamesE True (Var _ (Qualified Nothing name)) = (True, [name])
-  usedNamesE True (Var _ (Qualified (Just moduleName') name))
+  usedNamesE True (Var _ (Resolved Nothing (Qualified _ name))) = (True, [name])
+  usedNamesE True (Var _ (Resolved (Just moduleName') (Qualified _ name)))
     | moduleName == moduleName' = (True, [name])
   usedNamesE True (Abs _ _) = (False, [])
   usedNamesE scope _ = (scope, [])
@@ -155,12 +155,12 @@ usedTypeNames moduleName = go
 
   usedNames :: SourceType -> [ProperName 'TypeName]
   usedNames (ConstrainedType _ con _) = usedConstraint con
-  usedNames (TypeConstructor _ (Qualified (Just moduleName') name))
+  usedNames (TypeConstructor _ (Resolved (Just moduleName') (Qualified _ name)))
     | moduleName == moduleName' = [name]
   usedNames _ = []
 
   usedConstraint :: SourceConstraint -> [ProperName 'TypeName]
-  usedConstraint (Constraint _ (Qualified (Just moduleName') name) _ _ _)
+  usedConstraint (Constraint _ (Resolved (Just moduleName') (Qualified _ name)) _ _ _)
     | moduleName == moduleName' = [coerceProperName name]
   usedConstraint _ = []
 
@@ -225,7 +225,7 @@ toDataBindingGroup (CyclicSCC ds')
   | kds@((ss, _):_) <- concatMap kindDecl ds' = throwError . errorMessage' ss . CycleInKindDeclaration $ fmap snd kds
   | otherwise = return . DataBindingGroupDeclaration $ NEL.fromList ds'
   where
-  kindDecl (KindDeclaration sa _ pn _) = [(fst sa, Qualified Nothing pn)]
+  kindDecl (KindDeclaration sa _ pn _) = [(fst sa, Unqualified pn)]
   kindDecl _ = []
 
 isTypeSynonym :: Declaration -> Maybe (ProperName 'TypeName)

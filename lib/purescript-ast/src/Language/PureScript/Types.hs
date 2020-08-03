@@ -57,10 +57,10 @@ data Type a
   -- | A type wildcard, as would appear in a partial type synonym
   | TypeWildcard a (Maybe Text)
   -- | A type constructor
-  | TypeConstructor a (Qualified (ProperName 'TypeName))
+  | TypeConstructor a (Resolved (ProperName 'TypeName))
   -- | A type operator. This will be desugared into a type constructor during the
   -- "operators" phase of desugaring.
-  | TypeOp a (Qualified (OpName 'TypeOpName))
+  | TypeOp a (Resolved (OpName 'TypeOpName))
   -- | A type application
   | TypeApp a (Type a) (Type a)
   -- | Explicit kind application
@@ -103,10 +103,10 @@ srcTypeLevelString = TypeLevelString NullSourceAnn
 srcTypeWildcard :: SourceType
 srcTypeWildcard = TypeWildcard NullSourceAnn Nothing
 
-srcTypeConstructor :: Qualified (ProperName 'TypeName) -> SourceType
+srcTypeConstructor :: Resolved (ProperName 'TypeName) -> SourceType
 srcTypeConstructor = TypeConstructor NullSourceAnn
 
-srcTypeOp :: Qualified (OpName 'TypeOpName) -> SourceType
+srcTypeOp :: Resolved (OpName 'TypeOpName) -> SourceType
 srcTypeOp = TypeOp NullSourceAnn
 
 srcTypeApp :: SourceType -> SourceType -> SourceType
@@ -164,7 +164,7 @@ instance Serialise ConstraintData
 data Constraint a = Constraint
   { constraintAnn :: a
   -- ^ constraint annotation
-  , constraintClass :: Qualified (ProperName 'ClassName)
+  , constraintClass :: Resolved (ProperName 'ClassName)
   -- ^ constraint class name
   , constraintKindArgs :: [Type a]
   -- ^ kind arguments
@@ -177,7 +177,7 @@ data Constraint a = Constraint
 instance NFData a => NFData (Constraint a)
 instance Serialise a => Serialise (Constraint a)
 
-srcConstraint :: Qualified (ProperName 'ClassName) -> [SourceType] -> [SourceType] -> Maybe ConstraintData -> SourceConstraint
+srcConstraint :: Resolved (ProperName 'ClassName) -> [SourceType] -> [SourceType] -> Maybe ConstraintData -> SourceConstraint
 srcConstraint = Constraint NullSourceAnn
 
 mapConstraintArgs :: ([Type a] -> [Type a]) -> Constraint a -> Constraint a
@@ -293,7 +293,7 @@ constraintDataFromJSON = A.withObject "PartialConstraintData" $ \o -> do
 constraintFromJSON :: forall a. A.Parser a -> (A.Value -> A.Parser a) -> A.Value -> A.Parser (Constraint a)
 constraintFromJSON defaultAnn annFromJSON = A.withObject "Constraint" $ \o -> do
   constraintAnn   <- (o .: "constraintAnn" >>= annFromJSON) <|> defaultAnn
-  constraintClass <- o .: "constraintClass"
+  constraintClass <- o .: "constraintClass" <|> resolveWithQualified <$> o .: "constraintClass"
   constraintKindArgs <- o .:? "constraintKindArgs" .!= [] >>= traverse (typeFromJSON defaultAnn annFromJSON)
   constraintArgs  <- o .: "constraintArgs" >>= traverse (typeFromJSON defaultAnn annFromJSON)
   constraintData  <- o .: "constraintData" >>= traverse constraintDataFromJSON
@@ -317,9 +317,9 @@ typeFromJSON defaultAnn annFromJSON = A.withObject "Type" $ \o -> do
       b <- contents <|> pure Nothing
       pure $ TypeWildcard a b
     "TypeConstructor" ->
-      TypeConstructor a <$> contents
+      TypeConstructor a <$> (contents <|> resolveWithQualified <$> contents)
     "TypeOp" ->
-      TypeOp a <$> contents
+      TypeOp a <$> (contents <|> resolveWithQualified <$> contents)
     "TypeApp" -> do
       (b, c) <- contents
       TypeApp a <$> go b <*> go c
@@ -360,12 +360,12 @@ typeFromJSON defaultAnn annFromJSON = A.withObject "Type" $ \o -> do
     "KUnknown" ->
       TUnknown a <$> contents
     "Row" ->
-      TypeApp a (TypeConstructor a C.Row) <$> (go =<< contents)
+      TypeApp a (TypeConstructor a (resolveWithQualified C.Row)) <$> (go =<< contents)
     "FunKind" -> do
       (b, c) <- contents
-      TypeApp a . TypeApp a (TypeConstructor a C.Function) <$> go b <*> go c
+      TypeApp a . TypeApp a (TypeConstructor a (resolveWithQualified C.Function)) <$> go b <*> go c
     "NamedKind" ->
-      TypeConstructor a <$> contents
+      TypeConstructor a <$> (contents <|> resolveWithQualified <$> contents)
     other ->
       fail $ "Unrecognised tag: " ++ other
   where

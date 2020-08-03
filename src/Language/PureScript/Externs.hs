@@ -86,7 +86,7 @@ data ExternsFixity = ExternsFixity
   -- | The operator symbol
   , efOperator :: OpName 'ValueOpName
   -- | The value the operator is an alias for
-  , efAlias :: Qualified (Either Ident (ProperName 'ConstructorName))
+  , efAlias :: Resolved (Either Ident (ProperName 'ConstructorName))
   } deriving (Show, Generic)
 
 instance Serialise ExternsFixity
@@ -101,7 +101,7 @@ data ExternsTypeFixity = ExternsTypeFixity
   -- | The operator symbol
   , efTypeOperator :: OpName 'TypeOpName
   -- | The value the operator is an alias for
-  , efTypeAlias :: Qualified (ProperName 'TypeName)
+  , efTypeAlias :: Resolved (ProperName 'TypeName)
   } deriving (Show, Generic)
 
 instance Serialise ExternsTypeFixity

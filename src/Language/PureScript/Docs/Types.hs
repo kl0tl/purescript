@@ -681,13 +681,13 @@ asSourcePos = P.SourcePos <$> nth 0 asIntegral
                           <*> nth 1 asIntegral
 
 asConstraint :: Parse PackageError Constraint'
-asConstraint = P.Constraint () <$> key "constraintClass" asQualifiedProperName
+asConstraint = P.Constraint () <$> key "constraintClass" asConstraintClassName
                                <*> keyOrDefault "constraintKindArgs" [] (eachInArray asType)
                                <*> key "constraintArgs" (eachInArray asType)
                                <*> pure Nothing
 
-asQualifiedProperName :: Parse e (P.Qualified (P.ProperName a))
-asQualifiedProperName = fromAesonParser
+asConstraintClassName :: Parse e (P.Resolved (P.ProperName a))
+asConstraintClassName = catchError fromAesonParser $ \_ -> P.resolveWithQualified <$> fromAesonParser
 
 asQualifiedIdent :: Parse e (P.Qualified P.Ident)
 asQualifiedIdent = fromAesonParser

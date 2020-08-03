@@ -43,23 +43,26 @@ loadAllModules files = do
 createTemporaryModule :: Bool -> PSCiState -> P.Expr -> P.Module
 createTemporaryModule exec st val =
   let
-    imports       = psciImportedModules st
-    lets          = psciLetBindings st
-    moduleName    = P.ModuleName "$PSCI"
-    effModuleName = P.ModuleName "Effect"
-    effImport     = (effModuleName, P.Implicit, Just (P.ModuleName "$Effect"))
-    supportImport = (fst (psciInteractivePrint st), P.Implicit, Just (P.ModuleName "$Support"))
-    eval          = P.Var internalSpan (P.Qualified (Just (P.ModuleName "$Support")) (snd (psciInteractivePrint st)))
-    mainValue     = P.App eval (P.Var internalSpan (P.Qualified Nothing (P.Ident "it")))
-    itDecl        = P.ValueDecl (internalSpan, []) (P.Ident "it") P.Public [] [P.MkUnguarded val]
-    typeDecl      = P.TypeDeclaration
-                      (P.TypeDeclarationData (internalSpan, []) (P.Ident "$main")
-                        (P.srcTypeApp
-                          (P.srcTypeConstructor
-                            (P.Qualified (Just (P.ModuleName "$Effect")) (P.ProperName "Effect")))
-                                  P.srcTypeWildcard))
-    mainDecl      = P.ValueDecl (internalSpan, []) (P.Ident "$main") P.Public [] [P.MkUnguarded mainValue]
-    decls         = if exec then [itDecl, typeDecl, mainDecl] else [itDecl]
+    imports            = psciImportedModules st
+    lets               = psciLetBindings st
+    moduleName         = P.ModuleName "$PSCI"
+    effModuleName      = P.ModuleName "Effect"
+    effModuleAlias     = P.ModuleName "$Effect"
+    effImport          = (effModuleName, P.Implicit, Just effModuleAlias)
+    supportModuleName' = fst (psciInteractivePrint st)
+    supportModuleAlias = P.ModuleName "$Support"
+    supportImport      = (supportModuleName', P.Implicit, Just supportModuleAlias)
+    eval               = P.Var internalSpan (P.Resolved (Just supportModuleName') (P.Qualified (Just supportModuleAlias) (snd (psciInteractivePrint st))))
+    mainValue          = P.App eval (P.Var internalSpan (P.mkUnresolved (P.Ident "it")))
+    itDecl             = P.ValueDecl (internalSpan, []) (P.Ident "it") P.Public [] [P.MkUnguarded val]
+    typeDecl           = P.TypeDeclaration
+                           (P.TypeDeclarationData (internalSpan, []) (P.Ident "$main")
+                             (P.srcTypeApp
+                               (P.srcTypeConstructor
+                                 (P.Resolved (Just effModuleName) (P.Qualified (Just effModuleAlias) (P.ProperName "Effect"))))
+                                       P.srcTypeWildcard))
+    mainDecl           = P.ValueDecl (internalSpan, []) (P.Ident "$main") P.Public [] [P.MkUnguarded mainValue]
+    decls              = if exec then [itDecl, typeDecl, mainDecl] else [itDecl]
   in
     P.Module internalSpan
              [] moduleName

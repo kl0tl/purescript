@@ -556,7 +556,7 @@ checkConstrained ty tyClass =
       False
   where
   matches className =
-    (==) className . P.runProperName . P.disqualify . P.constraintClass
+    (==) className . P.runProperName . P.unresolve . P.constraintClass
 
 testCases :: [(Text, [DocsAssertion])]
 testCases =

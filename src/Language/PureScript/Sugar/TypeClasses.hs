@@ -92,7 +92,7 @@ desugarModule (Module ss coms name decls (Just exps)) = do
   superClassesNames _ = []
 
   constraintName :: SourceConstraint -> Qualified (ProperName 'ClassName)
-  constraintName (Constraint _ cName _ _ _) = cName
+  constraintName (Constraint _ cName _ _ _) = qualifyWithResolved cName
 
   classDeclName :: Declaration -> Qualified (ProperName 'ClassName)
   classDeclName (TypeClassDeclaration _ pn _ _ _ _) = Qualified (Just name) pn
@@ -216,29 +216,29 @@ desugarDecl mn exps = go
     return (expRef name className tys, [d, ValueDecl sa name Private [] [MkUnguarded (TypedValue True dict constrainedTy)]])
   go other = return (Nothing, [other])
 
-  expRef :: Ident -> Qualified (ProperName 'ClassName) -> [SourceType] -> Maybe DeclarationRef
+  expRef :: Ident -> Resolved (ProperName 'ClassName) -> [SourceType] -> Maybe DeclarationRef
   expRef name className tys
     | isExportedClass className && all isExportedType (getConstructors `concatMap` tys) = Just $ TypeInstanceRef genSpan name
     | otherwise = Nothing
 
-  isExportedClass :: Qualified (ProperName 'ClassName) -> Bool
+  isExportedClass :: Resolved (ProperName 'ClassName) -> Bool
   isExportedClass = isExported (elem . TypeClassRef genSpan)
 
-  isExportedType :: Qualified (ProperName 'TypeName) -> Bool
+  isExportedType :: Resolved (ProperName 'TypeName) -> Bool
   isExportedType = isExported $ \pn -> isJust . find (matchesTypeRef pn)
 
   isExported
     :: (ProperName a -> [DeclarationRef] -> Bool)
-    -> Qualified (ProperName a)
+    -> Resolved (ProperName a)
     -> Bool
-  isExported test (Qualified (Just mn') pn) = mn /= mn' || test pn exps
-  isExported _ _ = internalError "Names should have been qualified in name desugaring"
+  isExported test (Resolved (Just mn') (Qualified _ pn)) = mn /= mn' || test pn exps
+  isExported _ _ = internalError "Names should have been resolved in name desugaring"
 
   matchesTypeRef :: ProperName 'TypeName -> DeclarationRef -> Bool
   matchesTypeRef pn (TypeRef _ pn' _) = pn == pn'
   matchesTypeRef _ _ = False
 
-  getConstructors :: SourceType -> [Qualified (ProperName 'TypeName)]
+  getConstructors :: SourceType -> [Resolved (ProperName 'TypeName)]
   getConstructors = everythingOnTypes (++) getConstructor
     where
     getConstructor (TypeConstructor _ tcname) = [tcname]
@@ -279,7 +279,7 @@ typeClassMemberToDictionaryAccessor mn name args (TypeDeclaration (TypeDeclarati
   in ValueDecl sa ident Private [] $
     [MkUnguarded (
      TypedValue False (TypeClassDictionaryAccessor className ident) $
-       moveQuantifiersToFront (quantify (srcConstrainedType (srcConstraint className [] (map (srcTypeVar . fst) args) Nothing) ty))
+       moveQuantifiersToFront (quantify (srcConstrainedType (srcConstraint (resolveWithQualified className) [] (map (srcTypeVar . fst) args) Nothing) ty))
     )]
 typeClassMemberToDictionaryAccessor _ _ _ _ = internalError "Invalid declaration in type class definition"
 
@@ -293,18 +293,18 @@ typeInstanceDictionaryDeclaration
   -> Ident
   -> ModuleName
   -> [SourceConstraint]
-  -> Qualified (ProperName 'ClassName)
+  -> Resolved (ProperName 'ClassName)
   -> [SourceType]
   -> [Declaration]
   -> Desugar m Declaration
 typeInstanceDictionaryDeclaration sa@(ss, _) name mn deps className tys decls =
-  rethrow (addHint (ErrorInInstance className tys)) $ do
+  rethrow (addHint (ErrorInInstance (qualifyWithResolved className) tys)) $ do
   m <- get
 
   -- Lookup the type arguments and member types for the type class
   TypeClassData{..} <-
-    maybe (throwError . errorMessage' ss . UnknownName $ fmap TyClassName className) return $
-      M.lookup (qualify mn className) m
+    maybe (throwError . errorMessage' ss . UnknownName $ fmap TyClassName (qualifyWithResolved className)) return $
+      M.lookup (qualify mn $ qualifyWithResolved className) m
 
   -- Replace the type arguments with the appropriate types in the member types
   let memberTypes = map (second (replaceAllTypeVars (zip (map fst typeClassArguments) tys))) typeClassMembers
@@ -329,7 +329,7 @@ typeInstanceDictionaryDeclaration sa@(ss, _) name mn deps className tys decls =
       let props = Literal ss $ ObjectLiteral $ map (first mkString) (members ++ superclasses)
           dictTy = foldl srcTypeApp (srcTypeConstructor (fmap (coerceProperName . dictSynonymName) className)) tys
           constrainedTy = quantify (foldr srcConstrainedType dictTy deps)
-          dict = TypeClassDictionaryConstructorApp className props
+          dict = TypeClassDictionaryConstructorApp (qualifyWithResolved className) props
           result = ValueDecl sa name Private [] [MkUnguarded (TypedValue True dict constrainedTy)]
       return result
 
@@ -337,7 +337,7 @@ typeInstanceDictionaryDeclaration sa@(ss, _) name mn deps className tys decls =
 
   memberToValue :: [(Ident, SourceType)] -> Declaration -> Desugar m Expr
   memberToValue tys' (ValueDecl (ss', _) ident _ [] [MkUnguarded val]) = do
-    _ <- maybe (throwError . errorMessage' ss' $ ExtraneousClassMember ident className) return $ lookup ident tys'
+    _ <- maybe (throwError . errorMessage' ss' $ ExtraneousClassMember ident (qualifyWithResolved className)) return $ lookup ident tys'
     return val
   memberToValue _ _ = internalError "Invalid declaration in type instance definition"
 
@@ -351,6 +351,6 @@ typeClassMemberName = fromMaybe (internalError "typeClassMemberName: Invalid dec
 
 superClassDictionaryNames :: [Constraint a] -> [Text]
 superClassDictionaryNames supers =
-  [ superclassName pn index
+  [ superclassName (qualifyWithResolved pn) index
   | (index, Constraint _ pn _ _ _) <- zip [0..] supers
   ]

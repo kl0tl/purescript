@@ -187,8 +187,8 @@ entails SolverOptions{..} constraint context hints =
     forClassName _ _ _ _ _ = internalError "forClassName: expected qualified class name"
 
     ctorModules :: SourceType -> Maybe ModuleName
-    ctorModules (TypeConstructor _ (Qualified (Just mn) _)) = Just mn
-    ctorModules (TypeConstructor _ (Qualified Nothing _)) = internalError "ctorModules: unqualified type name"
+    ctorModules (TypeConstructor _ (Resolved (Just mn) _)) = Just mn
+    ctorModules (TypeConstructor _ (Resolved Nothing _)) = internalError "ctorModules: unresolved type name"
     ctorModules (TypeApp _ ty _) = ctorModules ty
     ctorModules (KindApp _ ty _) = ctorModules ty
     ctorModules (KindedType _ ty _) = ctorModules ty
@@ -198,13 +198,13 @@ entails SolverOptions{..} constraint context hints =
     findDicts ctx cn = fmap (fmap NamedInstance) . foldMap NEL.toList . foldMap M.elems . (>>= M.lookup cn) . flip M.lookup ctx
 
     valUndefined :: Expr
-    valUndefined = Var nullSourceSpan (Qualified (Just C.Prim) (Ident C.undefined))
+    valUndefined = Var nullSourceSpan (mkResolved (Ident C.undefined) C.Prim)
 
     solve :: SourceConstraint -> WriterT (Any, [(Ident, InstanceContext, SourceConstraint)]) (StateT InstanceContext m) Expr
     solve con = go 0 con
       where
         go :: Int -> SourceConstraint -> WriterT (Any, [(Ident, InstanceContext, SourceConstraint)]) (StateT InstanceContext m) Expr
-        go work (Constraint _ className' _ tys' _) | work > 1000 = throwError . errorMessage $ PossiblyInfiniteInstance className' tys'
+        go work (Constraint _ className' _ tys' _) | work > 1000 = throwError . errorMessage $ PossiblyInfiniteInstance (qualifyWithResolved className') tys'
         go work con'@(Constraint _ className' kinds' tys' conInfo) = WriterT . StateT . (withErrorMessageHint (ErrorSolvingConstraint con') .) . runStateT . runWriterT $ do
             -- We might have unified types by solving other constraints, so we need to
             -- apply the latest substitution.
@@ -221,14 +221,14 @@ entails SolverOptions{..} constraint context hints =
             TypeClassData
               { typeClassDependencies
               , typeClassIsEmpty
-              } <- case M.lookup className' classesInScope of
-                Nothing -> throwError . errorMessage $ UnknownClass className'
+              } <- case M.lookup (qualifyWithResolved className') classesInScope of
+                Nothing -> throwError . errorMessage $ UnknownClass (qualifyWithResolved className')
                 Just tcd -> pure tcd
 
             let instances = do
                   chain <- groupBy ((==) `on` tcdChain) $
                            sortBy (compare `on` (tcdChain &&& tcdIndex)) $
-                           forClassName env (combineContexts context inferred) className' kinds'' tys''
+                           forClassName env (combineContexts context inferred) (qualifyWithResolved className') kinds'' tys''
                   -- process instances in a chain in index order
                   let found = for chain $ \tcd ->
                                 -- Make sure the type unifies with the type in the type instance definition
@@ -270,16 +270,15 @@ entails SolverOptions{..} constraint context hints =
                 return (if typeClassIsEmpty then Unused match else match)
               Unsolved unsolved -> do
                 -- Generate a fresh name for the unsolved constraint's new dictionary
-                ident <- freshIdent ("dict" <> runProperName (disqualify (constraintClass unsolved)))
-                let qident = Qualified Nothing ident
+                ident <- freshIdent ("dict" <> runProperName (unresolve (constraintClass unsolved)))
                 -- Store the new dictionary in the InstanceContext so that we can solve this goal in
                 -- future.
-                newDicts <- lift . lift $ newDictionaries [] qident unsolved
+                newDicts <- lift . lift $ newDictionaries [] (Unqualified ident) unsolved
                 let newContext = mkContext newDicts
                 modify (combineContexts newContext)
                 -- Mark this constraint for generalization
                 tell (mempty, [(ident, context, unsolved)])
-                return (Var nullSourceSpan qident)
+                return (Var nullSourceSpan (mkUnresolved ident))
               Deferred ->
                 -- Constraint was deferred, just return the dictionary unchanged,
                 -- with no unsolved constraints. Hopefully, we can solve this later.
@@ -329,7 +328,7 @@ entails SolverOptions{..} constraint context hints =
             unique _ _ [(a, dict)] = return $ Solved a dict
             unique _ tyArgs tcds
               | pairwiseAny overlapping (map snd tcds) =
-                  throwError . errorMessage $ OverlappingInstances className' tyArgs (tcds >>= (toList . namedInstanceIdentifier . tcdValue . snd))
+                  throwError . errorMessage $ OverlappingInstances (qualifyWithResolved className') tyArgs (tcds >>= (toList . namedInstanceIdentifier . tcdValue . snd))
               | otherwise = return $ uncurry Solved (minimumBy (compare `on` length . tcdPath . snd) tcds)
 
             canBeGeneralized :: Type a -> Bool
@@ -364,7 +363,7 @@ entails SolverOptions{..} constraint context hints =
 
             -- Make a dictionary from subgoal dictionaries by applying the correct function
             mkDictionary :: Evidence -> Maybe [Expr] -> m Expr
-            mkDictionary (NamedInstance n) args = return $ foldl App (Var nullSourceSpan n) (fold args)
+            mkDictionary (NamedInstance n) args = return $ foldl App (Var nullSourceSpan (resolveWithQualified n)) (fold args)
             mkDictionary EmptyClassInstance args = return (useEmptyDict args)
             mkDictionary (WarnInstance msg) args = do
               tell . errorMessage $ UserDefinedWarning msg
@@ -412,8 +411,8 @@ entails SolverOptions{..} constraint context hints =
         -- the constraint @Coercible T b@), look up the type of its wrapped
         -- field and yield a new wanted constraint in terms of that type
         -- (@Coercible U b@ in the example).
-        (_, wrappedTy, _) <- lookupNewtypeConstructor env tyName
-        pure [Constraint nullSourceAnn C.Coercible [] [wrappedTy, b] Nothing]
+        (_, wrappedTy, _) <- lookupNewtypeConstructor env (qualifyWithResolved tyName)
+        pure [Constraint nullSourceAnn (resolveWithQualified C.Coercible) [] [wrappedTy, b] Nothing]
       t
         | (TypeConstructor _ aTyName, _, axs) <- unapplyTypes a
         , (TypeConstructor _ bTyName, _, bxs) <- unapplyTypes b
@@ -424,7 +423,7 @@ entails SolverOptions{..} constraint context hints =
             -- constructor's arguments and generate wanted constraints
             -- appropriately (e.g. here @a@ is representational and @b@ is
             -- phantom, yielding @Coercible a a'@).
-            let tyRoles = lookupRoles env aTyName
+            let tyRoles = lookupRoles env (qualifyWithResolved aTyName)
                 k role ax bx = case role of
                   Nominal
                     -- If we had first-class equality constraints, we'd just
@@ -438,20 +437,20 @@ entails SolverOptions{..} constraint context hints =
                     | otherwise ->
                         Nothing
                   Representational ->
-                    Just [Constraint nullSourceAnn C.Coercible [] [ax, bx] Nothing]
+                    Just [Constraint nullSourceAnn (resolveWithQualified C.Coercible) [] [ax, bx] Nothing]
                   Phantom ->
                     Just []
             fmap concat $ sequence $ zipWith3 k tyRoles axs bxs
         | (TypeConstructor _ tyName, _, xs) <- unapplyTypes t
         , not $ null xs
-        , Just (tvs, wrappedTy, _) <- lookupNewtypeConstructor env tyName -> do
+        , Just (tvs, wrappedTy, _) <- lookupNewtypeConstructor env (qualifyWithResolved tyName) -> do
             -- If the first argument is a newtype applied to some other types
             -- (e.g. @newtype T a = T a@ in @Coercible (T X) b@), look up the
             -- type of its wrapped field and yield a new wanted constraint in
             -- terms of that type with the type arguments substituted in (e.g.
             -- @Coercible (T[X/a]) b = Coercible X b@ in the example).
             let wrappedTySub = replaceAllTypeVars (zip tvs xs) wrappedTy
-            pure [Constraint nullSourceAnn C.Coercible [] [wrappedTySub, b] Nothing]
+            pure [Constraint nullSourceAnn (resolveWithQualified C.Coercible) [] [wrappedTySub, b] Nothing]
       _ ->
         -- In all other cases we can't solve the constraint.
         Nothing
@@ -466,7 +465,7 @@ entails SolverOptions{..} constraint context hints =
                   LT -> C.orderingLT
                   EQ -> C.orderingEQ
                   GT -> C.orderingGT
-          args' = [arg0, arg1, srcTypeConstructor ordering]
+          args' = [arg0, arg1, srcTypeConstructor $ resolveWithQualified ordering]
       in Just [TypeClassDictionaryInScope [] 0 EmptyClassInstance [] C.SymbolCompare [] [] args' Nothing]
     solveSymbolCompare _ = Nothing
 
@@ -539,7 +538,7 @@ entails SolverOptions{..} constraint context hints =
             -- types for such labels.
             _ -> ( not (null fixed)
                  , (fixed, rowVar)
-                 , Just [ srcConstraint C.RowUnion kinds [rest, r, rowVar] Nothing ]
+                 , Just [ srcConstraint (resolveWithQualified C.RowUnion) kinds [rest, r, rowVar] Nothing ]
                  , [("r", kindRow (head kinds))]
                  )
 
@@ -558,11 +557,11 @@ entails SolverOptions{..} constraint context hints =
     rowToRowList :: SourceType -> SourceType -> Maybe SourceType
     rowToRowList kind r =
         guard (isREmpty rest) $>
-        foldr rowListCons (srcKindApp (srcTypeConstructor C.RowListNil) kind) fixed
+        foldr rowListCons (srcKindApp (srcTypeConstructor $ resolveWithQualified C.RowListNil) kind) fixed
       where
         (fixed, rest) = rowToSortedList r
         rowListCons (RowListItem _ lbl ty) tl =
-          foldl srcTypeApp (srcKindApp (srcTypeConstructor C.RowListCons) kind)
+          foldl srcTypeApp (srcKindApp (srcTypeConstructor $ resolveWithQualified C.RowListCons) kind)
             [ srcTypeLevelString (runLabel lbl)
             , ty
             , tl ]
@@ -599,7 +598,7 @@ entails SolverOptions{..} constraint context hints =
 
         (canMakeProgress, cst) = case rest of
             REmptyKinded _ _ -> (True, Nothing)
-            _ -> (not (null fixed), Just [ srcConstraint C.RowLacks kinds [srcTypeLevelString sym, rest] Nothing ])
+            _ -> (not (null fixed), Just [ srcConstraint (resolveWithQualified C.RowLacks) kinds [srcTypeLevelString sym, rest] Nothing ])
 
 -- Check if an instance matches our list of types, allowing for types
 -- to be solved via functional dependencies. If the types match, we return a
@@ -732,17 +731,18 @@ newDictionaries
   -> m [NamedDict]
 newDictionaries path name (Constraint _ className instanceKinds instanceTy _) = do
     tcs <- gets (typeClasses . checkEnv)
-    let TypeClassData{..} = fromMaybe (internalError "newDictionaries: type class lookup failed") $ M.lookup className tcs
+    let className' = qualifyWithResolved className
+        TypeClassData{..} = fromMaybe (internalError "newDictionaries: type class lookup failed") $ M.lookup className' tcs
     supDicts <- join <$> zipWithM (\(Constraint ann supName supKinds supArgs _) index ->
                                       let sub = zip (map fst typeClassArguments) instanceTy in
-                                      newDictionaries ((supName, index) : path)
+                                      newDictionaries ((qualifyWithResolved supName, index) : path)
                                                       name
                                                       (Constraint ann supName
                                                         (replaceAllTypeVars sub <$> supKinds)
                                                         (replaceAllTypeVars sub <$> supArgs)
                                                         Nothing)
                                   ) typeClassSuperclasses [0..]
-    return (TypeClassDictionaryInScope [] 0 name path className [] instanceKinds instanceTy Nothing : supDicts)
+    return (TypeClassDictionaryInScope [] 0 name path className' [] instanceKinds instanceTy Nothing : supDicts)
 
 mkContext :: [NamedDict] -> InstanceContext
 mkContext = foldr combineContexts M.empty . map fromDict where
