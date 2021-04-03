@@ -291,6 +291,9 @@ checkForeignDecls m path = do
   unless (null deprecatedFFI) $
     warningDeprecatedForeignPrimes deprecatedFFI
 
+  when (elem "default" foreignIdentsStrs) $
+    warningDeprecatedFFIDefaultCJSExport
+
   foreignIdents <- either
                      errorInvalidForeignIdentifiers
                      (pure . S.fromList)
@@ -324,6 +327,10 @@ checkForeignDecls m path = do
   warningDeprecatedForeignPrimes :: [String] -> Make ()
   warningDeprecatedForeignPrimes =
     tell . mconcat . map (errorMessage' modSS . DeprecatedFFIPrime mname . T.pack)
+
+  warningDeprecatedFFIDefaultCJSExport :: Make ()
+  warningDeprecatedFFIDefaultCJSExport =
+    tell . errorMessage' modSS $ DeprecatedFFIDefaultCommonJSExport mname
 
   parseIdents :: [String] -> Either [String] [Ident]
   parseIdents strs =
